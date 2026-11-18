@@ -12,14 +12,12 @@ import os
 # message is dead-lettered instead (WR-016). One second keeps a runaway pattern from holding the engine for long.
 os.environ.setdefault("REGEX_TIMEOUT_SECONDS", "1")
 
-from presidio_analyzer import BatchAnalyzerEngine, AnalyzerEngine, Pattern, PatternRecognizer, RecognizerRegistry, RecognizerResult
-from presidio_analyzer.nlp_engine import NlpEngineProvider
+from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer, RecognizerRegistry, RecognizerResult
+from presidio_analyzer.nlp_engine import NlpEngineProvider, NoOpNlpEngine
 
 if importlib.util.find_spec("en_core_web_lg") is None:
     raise RuntimeError("Install the bundled en_core_web_lg model before starting the listener.")
-# One spaCy engine (en_core_web_lg, Presidio's default configuration) shared by every feed's registry. The analyzer runs it
-# on every string it analyzes, also with default detection off: custom recognizers read its tokens and lemmas for their
-# context words, while its named entities are only acted on through the predefined SpacyRecognizer.
+# One spaCy engine (en_core_web_lg, Presidio's default configuration) shared by every feed's registry.
 nlp_engine = NlpEngineProvider().create_engine()
 
 
@@ -38,18 +36,24 @@ class _TimeoutWatch(logging.Handler):
 _timeouts = _TimeoutWatch()
 logging.getLogger("presidio-analyzer").addHandler(_timeouts)
 
-# Per-feed detection engines built by configure_feed: feed name -> (batch engine or None, language).
+# Per-feed detection engines built by configure_feed: feed name -> (analyzer engine or None, language, NLP mode). The NLP
+# mode says what of spaCy a feed's recognizers read: "full" (named entities, for the predefined recognizers), "lemmas"
+# (tokens and lemmas, for the context words of a custom recognizer) or "none".
 _feeds = {}
+# Empty NLP artifacts by language, for feeds whose recognizers read nothing from spaCy.
+_no_nlp = {}
 
 
 def configure_feed(config_json):
     """Build one feed's Presidio registry from the .NET recognizer file (WR-014).
 
-    config_json holds feed, language, defaultDetection (Presidio:DefaultDetection), disabled (names of Presidio predefined
-    recognizers switched off) and recognizers (custom: name, entity, patterns of name, regex and score, context, denyList,
-    denyListScore). With defaultDetection false the registry holds the custom recognizers only, so no predefined
-    recognizer (and no spaCy PERSON, LOCATION, NRP or DATE_TIME guess) ever runs. With it true every predefined recognizer
-    runs too, unless it is switched off. The score threshold and every action are applied in .NET. Returns the feed name.
+    config_json holds feed, language, defaultDetection (Presidio:DefaultDetection), disabled and enabled (names of Presidio
+    predefined recognizers switched off or listed as on) and recognizers (custom: name, entity, patterns of name, regex and
+    score, context, denyList, denyListScore). With defaultDetection true every predefined recognizer runs beside the custom
+    ones unless it is switched off; spaCy NER provides PERSON, LOCATION, NRP and DATE_TIME. With defaultDetection false
+    the registry holds the custom recognizers only, and spaCy runs without its named-entity component, only when a custom
+    recognizer has context words (Presidio's context enhancer reads the lemmas around a match). Predefined names are checked either way, so a typo stops startup. The
+    score threshold and every action are applied in .NET. Returns the feed name.
     """
     config = json.loads(config_json)
     language = config["language"]
@@ -57,7 +61,6 @@ def configure_feed(config_json):
     if not isinstance(default_detection, bool):
         raise ValueError("defaultDetection must be true or false")
     registry = RecognizerRegistry(supported_languages=[language])
-    # The predefined recognizers are loaded in both modes only so a misspelled name in the file stops startup either way.
     registry.load_predefined_recognizers(languages=[language], nlp_engine=nlp_engine)
     disabled = set(config["disabled"])
     unknown = (disabled | set(config.get("enabled", []))) - {r.name for r in registry.recognizers}
@@ -69,17 +72,23 @@ def configure_feed(config_json):
         registry.add_recognizer(PatternRecognizer(supported_entity=item["entity"], name=item["name"], supported_language=language,
                                                   patterns=patterns or None, deny_list=item["denyList"] or None,
                                                   context=item["context"] or None, deny_list_score=float(item["denyListScore"])))
-    # An empty registry would make AnalyzerEngine load every default recognizer, so a feed with no recognizer left (no
-    # custom one and default detection off, or every one switched off) gets no engine and detects nothing.
+    # An empty registry would make AnalyzerEngine load every default recognizer, so a feed whose every recognizer is
+    # switched off, or that defines none while defaultDetection is false, gets no engine and detects nothing.
     engine = AnalyzerEngine(registry=registry, nlp_engine=nlp_engine, supported_languages=[language]) if registry.recognizers else None
-    _feeds[config["feed"]] = (BatchAnalyzerEngine(engine) if engine else None, language)
+    nlp = "full" if default_detection else "lemmas" if any(item["context"] for item in config["recognizers"]) else "none"
+    if nlp == "none" and language not in _no_nlp:
+        _no_nlp[language] = NoOpNlpEngine(models=[{"lang_code": language, "model_name": "none"}])
+        _no_nlp[language].load()
+    _feeds[config["feed"]] = (engine, language, nlp)
     return config["feed"]
 
 
-def analyze_strings(feed, texts_json):
+def analyze_strings(feed, texts_json, contexts_json="null"):
     """Detect personal-data spans in each decoded string of one message, in one batch.
 
-    texts_json is a JSON list of strings. Returns a JSON list with one list per string of
+    texts_json is a JSON list of strings. contexts_json is null or a JSON list with one list of context words per string:
+    the property names of a JSON string's key path, which Presidio's context enhancer matches against the recognizers'
+    context words, as BatchAnalyzerEngine.analyze_dict passes a key. Returns a JSON list with one list per string of
     [start, end, entity, score, recognizer name], with UTF-16 offsets. The recognizer name is the custom recognizer's
     name or the predefined recognizer's class name, such as SpacyRecognizer.
     Raises when a pattern timed out, so the caller dead-letters the message rather than publish unchecked text.
@@ -89,14 +98,33 @@ def analyze_strings(feed, texts_json):
     texts = json.loads(texts_json)
     if not isinstance(texts, list) or not all(isinstance(text, str) for text in texts):
         raise ValueError("A JSON list of strings is required")
-    engine, language = _feeds[feed]
+    contexts = json.loads(contexts_json)
+    if contexts is None:
+        contexts = [[] for _ in texts]
+    if (not isinstance(contexts, list) or len(contexts) != len(texts)
+            or not all(isinstance(words, list) and all(isinstance(word, str) for word in words) for words in contexts)):
+        raise ValueError("One JSON list of context words per string is required")
+    engine, language, nlp = _feeds[feed]
     if engine is None or not texts:
         return json.dumps([[] for _ in texts])
     _timeouts.timed_out = False
-    # Every span is returned, including those below the feed threshold: .NET applies the threshold and lists a string
-    # with only weak detections for review (WR-018).
-    results = list(engine.analyze_iterator(texts, language=language, score_threshold=0.0,
-                                           batch_size=max(1, min(len(texts), 64))))
+    # spaCy processes the batch at once, as BatchAnalyzerEngine.analyze_iterator does; each string is then analyzed with
+    # its own context. Every span is returned, including those below the feed threshold: .NET applies the threshold and
+    # lists a string with only weak detections for review (WR-018). Without default detection no recognizer reads spaCy's
+    # named entities: spaCy runs without its NER component when a custom recognizer has context words, so the lemmas
+    # around a match still reach the context enhancer, and not at all otherwise. Key-path context words are passed either
+    # way; the enhancer skips a recognizer without context words, so empty artifacts change no result.
+    batch_size = max(1, min(len(texts), 64))
+    if nlp == "none":
+        artifacts = list(_no_nlp[language].process_batch(texts=texts, language=language))
+    elif nlp == "lemmas":
+        spacy = engine.nlp_engine.get_nlp(language)
+        with spacy.select_pipes(disable=[name for name in spacy.pipe_names if name == "ner"]):
+            artifacts = list(engine.nlp_engine.process_batch(texts=texts, language=language, batch_size=batch_size))
+    else:
+        artifacts = list(engine.nlp_engine.process_batch(texts=texts, language=language, batch_size=batch_size))
+    results = [engine.analyze(text=text, language=language, nlp_artifacts=nlp_artifacts, score_threshold=0.0, context=words or None)
+               for (text, nlp_artifacts), words in zip(artifacts, contexts)]
     if _timeouts.timed_out:
         raise TimeoutError("A recognizer pattern timed out")
     return json.dumps([[[_utf16(text, r.start), _utf16(text, r.end), r.entity_type, round(float(r.score), 4),

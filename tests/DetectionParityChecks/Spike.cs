@@ -99,7 +99,10 @@ public static class Spike
         var production = results.Where(r => !Path.GetFileName(r.Path).Contains("Negative_Testing", StringComparison.Ordinal)).ToArray();
         int rebuilt = production.Count(r => r.Output is not null);
 
-        var throughput = await Throughput(protector, production.Select(r => r.Path).ToArray(), rounds);
+        // spaCy runs with default detection off only for a custom recognizer with context words (see presidio_demo.py).
+        bool contextWords = RecognizerFileReader.ReadAll(Path.Combine(root, "src", "PresidioDemo.Core", "Configuration", "recognizers")).Values
+            .Any(file => file.Recognizers.Any(r => r.Context.Count > 0));
+        var throughput = await Throughput(protector, production.Select(r => r.Path).ToArray(), rounds, contextWords);
         // WR-019: a baseline name published unchanged fails until it is protected or approved; extra masking never fails.
         bool parity = unapproved.Length == 0 && stale.Length == 0 && rebuilt == production.Length;
         var negatives = results.Where(r => Path.GetFileName(r.Path).Contains("Negative_Testing", StringComparison.Ordinal))
@@ -189,7 +192,7 @@ public static class Spike
     /// that sustains the PNR feed's sizing peak of 400 messages per second (its share of the 2,000 messages per second
     /// sized for the airline feeds before this branch kept PNR only).
     /// </summary>
-    private static async Task<object> Throughput(DetectingFeedProtector protector, IReadOnlyList<string> samples, int rounds)
+    private static async Task<object> Throughput(DetectingFeedProtector protector, IReadOnlyList<string> samples, int rounds, bool contextWords)
     {
         foreach (string path in samples)
         {
@@ -220,10 +223,11 @@ public static class Spike
         {
             Rounds = rounds,
             Messages = messages,
-            // spaCy still processes every analyzed string (tokens and lemmas for context words); only with default detection
-            // on are its named entities acted on.
+            // With default detection off no recognizer reads spaCy's named entities: spaCy runs without its NER component
+            // when a custom recognizer has context words, and not at all otherwise.
             NlpNer = protector.DefaultDetection ? "on (spaCy en_core_web_lg)"
-                : "not acted on (Presidio:DefaultDetection false); spaCy en_core_web_lg still processes each analyzed string for context words",
+                : contextWords ? "off (Presidio:DefaultDetection false); spaCy en_core_web_lg runs without NER for context words"
+                : "off (Presidio:DefaultDetection false); spaCy does not run (no context words)",
             MessagesPerSecondPerTask = Math.Round(messages / total.Elapsed.TotalSeconds, 1),
             Feeds = rows,
             TasksForPeak = rows.Sum(r => r.Tasks),

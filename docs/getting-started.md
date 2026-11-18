@@ -204,13 +204,13 @@ if ($failed.Count -eq 0) { Write-Host "All .NET checks passed." -ForegroundColor
 **You should see:** `All .NET checks passed.` `Messaging.ContractTests` prints `SKIP Solace contract ...` here; it
 runs against the broker in step 20.
 
-**Python unit tests** (47 tests, about 1–2 minutes; they load Presidio):
+**Python unit tests** (50 tests, about 1–2 minutes; they load Presidio):
 
 ```powershell
 src\.venv\Scripts\python -m unittest discover -s tests/unit-tests
 ```
 
-**You should see:** `Ran 47 tests` and `OK`.
+**You should see:** `Ran 50 tests` and `OK`.
 
 **End-to-end sample check.** This sends both files in `docs/sample-docs/PNR` through the real feed worker and
 embedded Presidio, over the in-memory broker:

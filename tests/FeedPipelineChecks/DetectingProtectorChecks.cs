@@ -344,6 +344,15 @@ internal static class DetectingProtectorChecks
             });
             await RejectAsync(() => slowProtector.ProtectAsync(FeedType.PNR, slowInput, CancellationToken.None),
                 "Local Presidio detection failed", "a pattern timeout dead-letters the message");
+            // Default detection off and no custom recognizer: the message is never sent to Presidio, so the slow pattern
+            // configured there cannot run and the strings are published as received; with default detection on the same
+            // file is sent, and the timeout dead-letters it.
+            var undefinedFile = new Dictionary<FeedType, RecognizerFile> { [FeedType.PNR] = files[FeedType.PNR] with { Recognizers = [] } };
+            var notSent = await new DetectingFeedProtector(undefinedFile).ProtectAsync(FeedType.PNR, slowInput, CancellationToken.None);
+            Check(slowInput.Fields.All(f => notSent.Values[f.Id] == f.Value),
+                "default detection off without custom recognizers: the message is not sent to Presidio and is published as received");
+            await RejectAsync(() => new DetectingFeedProtector(undefinedFile, defaultDetection: true).ProtectAsync(FeedType.PNR, slowInput, CancellationToken.None),
+                "Local Presidio detection failed", "default detection on without custom recognizers: the message is sent to Presidio");
         }
         finally
         {

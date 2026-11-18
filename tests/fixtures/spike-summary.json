@@ -62,16 +62,16 @@
   "throughput": {
     "rounds": 20,
     "messages": 40,
-    "nlpNer": "not acted on (Presidio:DefaultDetection false); spaCy en_core_web_lg still processes each analyzed string for context words",
-    "messagesPerSecondPerTask": 24,
+    "nlpNer": "off (Presidio:DefaultDetection false); spaCy en_core_web_lg runs without NER for context words",
+    "messagesPerSecondPerTask": 40.3,
     "feeds": [
       {
         "feed": "PNR",
-        "messagesPerSecondPerTask": 24,
-        "tasks": 17
+        "messagesPerSecondPerTask": 40.4,
+        "tasks": 10
       }
     ],
-    "tasksForPeak": 17,
+    "tasksForPeak": 10,
     "assumption": "400 msg/s peak for the PNR feed; one worker process per ECS task"
   },
   "rejected": []

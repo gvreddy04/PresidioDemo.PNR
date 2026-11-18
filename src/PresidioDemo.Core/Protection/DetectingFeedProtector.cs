@@ -113,6 +113,11 @@ public sealed record DetectionOutcome(IReadOnlyDictionary<string, string> Values
 /// <c>DEFAULT</c>, else <c>replace</c>), and a string in which nothing is detected is published unchanged. Every result keeps
 /// the string's width (WR-015).
 /// </summary>
+/// <remarks>
+/// With <c>Presidio:DefaultDetection</c> off (the shipped default), a file that defines no custom recognizer is not sent to
+/// Presidio at all, so its messages are published as received; spaCy runs only for a custom recognizer with context words,
+/// and then without its named-entity component (see <c>python/presidio_demo.py</c>).
+/// </remarks>
 /// <param name="files">The validated recognizer files by feed.</param>
 /// <param name="defaultDetection">Whether Presidio's predefined recognizers run beside the defined ones
 /// (<c>Presidio:DefaultDetection</c>). When false they are not registered at all, so they never run.</param>
@@ -206,7 +211,10 @@ public sealed class DetectingFeedProtector(IReadOnlyDictionary<FeedType, Recogni
             throw new InvalidDataException("An allow-list pattern timed out; input retained and no output was published.");
         }
 
-        var spans = await AnalyzeAsync(feed, pending.Select(slot => candidates[slot].Value).ToArray(), cancellationToken);
+        // Without default detection Presidio runs the file's custom recognizers only; a file without any is not sent at all.
+        var spans = defaultDetection || file.Recognizers.Count > 0
+            ? await AnalyzeAsync(feed, pending.Select(slot => candidates[slot].Value).ToArray(), cancellationToken)
+            : pending.Select(_ => Array.Empty<Span>()).ToArray();
         for (int i = 0; i < pending.Count; i++)
         {
             int slot = pending[i];

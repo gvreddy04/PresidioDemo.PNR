@@ -20,16 +20,39 @@ def config(feed, disabled=(), recognizers=(), default_detection=False):
                        "recognizers": list(recognizers)})
 
 
-def custom(name, entity, *patterns, deny_list=(), score=0.9):
+def custom(name, entity, *patterns, deny_list=(), score=0.9, context=()):
     """Return one custom recognizer for the bridge JSON."""
     return {"name": name, "entity": entity, "patterns": [{"name": name, "regex": p, "score": score} for p in patterns],
-            "context": [], "denyList": list(deny_list), "denyListScore": 1.0}
+            "context": list(context), "denyList": list(deny_list), "denyListScore": 1.0}
 
 
 def spans(feed, *texts):
     """Return (entity, matched text, recognizer) per input string from the configured feed."""
     result = json.loads(presidio_demo.analyze_strings(feed, json.dumps(list(texts))))
     return [[(entity, text[start:end], name) for start, end, entity, score, name in found] for text, found in zip(texts, result)]
+
+
+def pipes_during(feed, *texts):
+    """Return the spaCy components that were switched on while the bridge analyzed texts for a feed (empty: spaCy did
+    not run)."""
+    seen = []
+    original = presidio_demo.nlp_engine.process_batch
+
+    def spy(*args, **kwargs):
+        seen.extend(presidio_demo.nlp_engine.get_nlp("en").pipe_names)
+        return original(*args, **kwargs)
+
+    presidio_demo.nlp_engine.process_batch = spy
+    try:
+        presidio_demo.analyze_strings(feed, json.dumps(list(texts)))
+    finally:
+        del presidio_demo.nlp_engine.process_batch
+    return seen
+
+
+def top_score(feed, text):
+    """Return the highest score Presidio gives one string, or 0."""
+    return max((score for start, end, entity, score, name in json.loads(presidio_demo.analyze_strings(feed, json.dumps([text])))[0]), default=0)
 
 
 class DetectionBridgeTests(unittest.TestCase):
@@ -45,12 +68,14 @@ class DetectionBridgeTests(unittest.TestCase):
         # The shipped file with the switch on, under its own feed name, for the default-detection-on cases.
         shipped = json.loads(cls.lines[0])
         cls.custom_names = {r["name"] for r in shipped["recognizers"]}
+        cls.shipped_context = any(r["context"] for r in shipped["recognizers"])
         presidio_demo.configure_feed(json.dumps(dict(shipped, feed="ShippedOn", defaultDetection=True)))
         presidio_demo.configure_feed(config("OnlyA", recognizers=[custom("demoCode", "DEMO_CODE", r"DEMO-\d{4}")]))
         presidio_demo.configure_feed(config("OnlyB", default_detection=True))
         presidio_demo.configure_feed(config("Nothing"))
         presidio_demo.configure_feed(config("NoCards", disabled=["CreditCardRecognizer"], default_detection=True))
         presidio_demo.configure_feed(config("Titles", recognizers=[custom("titles", "TITLE", deny_list=["MR", "DR"])]))
+        presidio_demo.configure_feed(config("Context", recognizers=[custom("member", "DEMO_CODE", r"ZX\d{4}", score=0.3, context=["membership"])]))
 
     def test_the_pnr_feed_configures(self):
         self.assertEqual(sorted(self.feeds), ["PNR"])
@@ -87,6 +112,31 @@ class DetectionBridgeTests(unittest.TestCase):
     def test_default_detection_off_without_recognizers_detects_nothing(self):
         self.assertEqual(spans("Nothing", "Card 4111 1111 1111 1111", "Contact Alex Sample", "alex@example.com", "MILLER/JORDAN"),
                          [[], [], [], []])
+
+    def test_spacy_runs_with_default_detection_off_only_for_context_words_and_then_without_ner(self):
+        # Off, no recognizer reads spaCy's named entities: spaCy does not run for a feed whose custom recognizers have no
+        # context words, and runs without its NER component when one has; on, it runs whole, as before.
+        self.assertEqual(pipes_during("OnlyA", "ref DEMO-1234"), [], "no context words: spaCy does not run")
+        self.assertEqual(pipes_during("Nothing", "MILLER/JORDAN"), [], "no custom recognizer: spaCy does not run")
+        self.assertIsNone(presidio_demo._feeds["Nothing"][0], "no custom recognizer and default detection off: no engine")
+        context = pipes_during("Context", "membership ZX1234")
+        self.assertIn("lemmatizer", context)
+        self.assertNotIn("ner", context)
+        shipped = pipes_during(self.feeds[0], "MILLER/JORDAN")
+        self.assertEqual("lemmatizer" in shipped, self.shipped_context, "the shipped file runs spaCy exactly when it has context words")
+        self.assertNotIn("ner", shipped)
+        self.assertIn("ner", pipes_during("ShippedOn", "MILLER/JORDAN"), "default detection on runs spaCy with NER")
+        self.assertIn("ner", presidio_demo.nlp_engine.get_nlp("en").pipe_names, "the shared pipeline is restored after the call")
+
+    def test_the_shipped_file_has_context_words_so_spacy_runs_without_ner(self):
+        # memberName has the context word MBR, so with default detection off spaCy runs, without its NER component.
+        self.assertTrue(self.shipped_context)
+        self.assertNotIn("ner", pipes_during("PNR", "ONE*MBR JORDAN MILLER*ACCT"))
+
+    def test_a_context_word_still_raises_a_match_with_default_detection_off(self):
+        # spaCy's lemmas reach the context enhancer, so a context word next to a match works as with default detection on.
+        self.assertGreaterEqual(top_score("Context", "membership ZX1234"), 0.5)
+        self.assertAlmostEqual(top_score("Context", "ZX1234"), 0.3)
 
     def test_default_detection_must_be_true_or_false(self):
         for value in ("yes", None, 1):
