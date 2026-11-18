@@ -1,6 +1,6 @@
 # Presidio Feed Protection Demo
 
-Process the airline PNR feed from a message broker by decoding each message generically and detecting personal data with local Presidio and the feed's recognizer formats. PNR stays unchanged. Output is validated and confirmed by the broker before the input is acknowledged; rejected input goes to the feed's restricted dead-letter queue.
+Process the airline PNR feed from a message broker by decoding each message generically and detecting passenger names with local Presidio and the feed's recognizer file. Presidio's own predefined recognizers run too only when `Presidio:DefaultDetection` is on (off by default). PNR stays unchanged. Output is validated and confirmed by the broker before the input is acknowledged; rejected input goes to the feed's restricted dead-letter queue.
 
 This branch (`PNR-Worker`) runs the PNR feed only.
 
@@ -93,7 +93,7 @@ Nothing in Core, the feed code, the worker or the route changes.
 
 All settings are in one file, [src/PresidioDemo.Worker/appsettings.json](src/PresidioDemo.Worker/appsettings.json):
 
-- **Shared settings** at the top: `Messaging` (transport and delivery limits), `Presidio` (`RecognizerDirectory`, `DetectionLog` and an optional `PythonEnvironment` folder) and `Logging`.
+- **Shared settings** at the top: `Messaging` (transport and delivery limits), `Presidio` (`RecognizerDirectory`, `DefaultDetection`, `DetectionLog`, `DetectionLogValues` and an optional `PythonEnvironment` folder) and `Logging`.
 - **`Environments`**: one section per environment, holding only what differs, including its `Messaging:Routes` (`Feed`, `Input`, `Output` and `DeadLetter`). Today these are `Local` (local broker) and `Dev`; each routes the PNR feed only, as route 0. Adding `QA`, `UAT` or `Prod` means adding one more block.
 - **`CurrentEnvironment`**: the default when nothing else selects one (`Local`, for developer machines).
 
@@ -108,9 +108,19 @@ Startup stops with one clear message for any of these:
 - an HTTP host, or `tcps://` without certificate validation
 - a route for a feed this build does not support, a feed with more than one route, or shared or wildcard destinations. Settings written for a build with more feeds stop startup with, for example, `Messaging:Routes:0 names feed 'TKT', which this build does not support.`
 - a `Presidio:PythonEnvironment` folder without `pyvenv.cfg`
+- a `Presidio:DefaultDetection` value other than `true` or `false`
 - an invalid or missing recognizer file (`Presidio:RecognizerDirectory`)
 
 `Solace:ProvisionQueues` creates the input and dead-letter queues and is enabled only for `Local`; other environments use queues provisioned by the broker team.
+
+**Default detection.** `Presidio:DefaultDetection` (`false` in the base settings, read at startup) decides which recognizers act:
+
+| `Presidio:DefaultDetection` | What acts | Made-up example: `CTCEDAHK1 alex@example.com 1MILLER/JORDAN` |
+| --- | --- | --- |
+| `false` (default) | Only the recognizers the feed's file defines (`type="custom"`). Presidio's predefined recognizers (email, phone, credit card, IP address, IBAN, spaCy `PERSON`, `NRP`, `LOCATION`, `DATE_TIME` and the rest) are not registered, so they never run. With no custom recognizer, the output equals the input. | `CTCEDAHK1 alex@example.com 1*************` |
+| `true` | The defined recognizers plus Presidio's predefined recognizers, minus any the file switches off with `<recognizer type="predefined" enabled="false" />`. Their spans get their entity's `<anonymizer>`, else `DEFAULT`, else Presidio's `replace`. | `CTCEDAHK1 ################ 1*************` |
+
+In both modes the allow list, width fitting, the fail-closed dead letters, the detection log and its review lines work the same. Like the other `Presidio` settings, an environment block or a variable such as `Presidio__DefaultDetection=true` sets it for one feed service. The worker logs the mode once at startup, for example `Default detection off (Presidio:DefaultDetection=false): only the recognizers each feed's file defines act.` With the flag off, spaCy is still loaded and still processes each analyzed string, because the custom recognizers' `<context>` words use its tokens and lemmas; its named entities are not acted on.
 
 **One feed per service.** `Messaging:Feed` (for example `Messaging__Feed=PNR` in a task definition) makes the process consume only that feed's route, so the feed runs as its own ECS service and scales on its own. When it is empty, the process runs every routed feed. A value without a route stops startup.
 
@@ -140,36 +150,35 @@ The PNR feed is decoded generically; there is no schema or field list, so a temp
 
 `PnrDecoder` (an `XdrFeedDecoder`) reads the IBM MQ export or raw payload, and `XdrTextScanner` scans the big-endian XDR words for counted strings of four or more printable ASCII characters. Shorter spans stay raw words and are never changed, because words such as `00000001 31000000` cannot be told apart from a one-character string (WR-015). A counted string whose text is not printable ASCII but is mostly letters, digits or spaces (Latin-1, EBCDIC, or text with a control character) cannot be checked, so the message is dead-lettered; this includes lowercase and mixed-case EBCDIC. So is a length word followed by printable text that is longer than 65,535 bytes or runs past the end of the payload. Integers, framing and padding are never decoded or changed. Protected values are written back at the same width, and validation rejects any change outside the scanned strings.
 
-The feed's recognizer file is [src/PresidioDemo.Core/Configuration/recognizers/pnr.xml](src/PresidioDemo.Core/Configuration/recognizers/pnr.xml). It is a Presidio-style XML: a flat list under `<recognizers>` that mirrors Presidio's recognizer registry YAML, its `analyze` allow list and its anonymizers map, using Presidio's names (WR-014). Each decoded string is decided on its own:
+The feed's recognizer file is [src/PresidioDemo.Core/Configuration/recognizers/pnr.xml](src/PresidioDemo.Core/Configuration/recognizers/pnr.xml). It is a Presidio-style XML: a flat list under `<recognizers>` that mirrors Presidio's recognizer registry YAML, its `analyze` allow list and its anonymizers map, using Presidio's names (WR-014). Its scope is passenger names only: it defines two `PERSON` recognizers, `passengerName` (`SURNAME/GIVEN`, such as `MILLER/JORDAN MR`) and `memberName` (the name after `MBR` in a loyalty record), with a `PERSON` and a `DEFAULT` anonymizer. Every other PNR value (dates of birth, documents, contacts, tickets, loyalty, payment, identifiers, addresses) is published as received while `Presidio:DefaultDetection` is off. Each decoded string is decided on its own:
 
-1. **Allow list.** A string that matches an `<allow_list>` item end to end (exact text, or a regex with `match="regex"`) is published unchanged without analysis. An item never releases a piece of a longer string: `1405` is kept by `^\d{4}$`, but the `1234` inside `RBY09NOV*APPR CC VI 1234 OK` is still masked. Regex items match case-insensitively, as patterns do; exact items compare case-sensitively. Each item must be a valid regex on its own: one that only compiles inside the whole-string wrapper (an unbalanced `)`) stops startup.
-2. **Detection.** Every Presidio predefined recognizer runs (spaCy NER for `PERSON`, `LOCATION`, `NRP` and `DATE_TIME`; patterns for `EMAIL_ADDRESS`, `CREDIT_CARD`, `IP_ADDRESS` and the rest), unless the file switches it off by class name with `<recognizer name="…" type="predefined" enabled="false" />`. The file's `type="custom"` recognizers add PNR-specific patterns, context words and deny lists. Spans scoring below `default_score_threshold` are ignored.
+1. **Allow list.** A string that matches an `<allow_list>` item end to end (exact text, or a regex with `match="regex"`) is published unchanged without analysis. An item never releases a piece of a longer string: `1405` is kept by `^\d{4}$`, but the name inside `09NOV26 MILLER/JORDAN` is still masked. Regex items match case-insensitively, as patterns do; exact items compare case-sensitively. Each item must be a valid regex on its own: one that only compiles inside the whole-string wrapper (an unbalanced `)`) stops startup.
+2. **Detection.** The file's `type="custom"` recognizers run: PNR-specific patterns, context words and deny lists. Only with `Presidio:DefaultDetection` on does every Presidio predefined recognizer run too (spaCy NER for `PERSON`, `LOCATION`, `NRP` and `DATE_TIME`; patterns for `EMAIL_ADDRESS`, `CREDIT_CARD`, `IP_ADDRESS` and the rest), unless the file switches it off by class name with `<recognizer name="…" type="predefined" enabled="false" />`. A misspelled class name stops startup in both modes. Spans scoring below `default_score_threshold` are ignored.
 3. **Actions.** Each detected span gets its entity's `<anonymizer>`, else the `DEFAULT` one, else Presidio's default `replace` (`<ENTITY>`). The operators are Presidio's `mask`, `replace`, `redact`, `hash` and `keep`, with Presidio's parameter names (`masking_char`, `chars_to_mask`, `from_end`, `new_value`, `hash_type`, `salt`); `encrypt`, `custom` and `surrogate_ahds` stop startup. Overlapping spans of different entities are resolved by score, then length, then position.
 4. **Width.** Every result is fitted to the width of the text it replaces: padded with spaces or cut (WR-015). `Alex Sample` becomes `***********` with `mask`, `<PERSON>` and three spaces with `replace`, eleven spaces with `redact`, and the first eleven hex characters of its hash with `hash`; in a five-character value, `replace` writes `<PERS`.
 5. **Nothing detected.** A string in which nothing is detected is published unchanged and listed for review in the detection log. There is no PNR-specific rule: a PNR is published unchanged unless a recognizer detects it.
 
 Local Presidio runs once per message as a batch through Python.NET, and returns spans only; every decision is made in .NET. A message is dead-lettered only for a structural failure: undecodable framing, binary text that is not printable ASCII, a recognizer pattern that times out (the bridge sets Presidio's limit to one second and treats a skipped pattern as a failure), or a rebuild that differs outside the protected strings (WR-016). An invalid recognizer file stops startup with a message naming the file and the problem, such as a retired element (`<builtIn>`, `<keep>`, `<format>`, `<pnrAnchor>`, `defaultMaskCharacter`), an unknown attribute, a rejected operator or a regex that does not compile.
 
-A custom recognizer and actions, with fictional data. `DOCSDAHK1/////12MAR85/F//MILLER/JORDAN-1MILLER/JORDAN` publishes as `DOCSDAHK1/////*******/*//*************-1*************`:
+A custom recognizer and actions, with fictional data. With default detection off, `DOCSDAHK1/////12MAR85/F//MILLER/JORDAN-1MILLER/JORDAN` publishes as `DOCSDAHK1/////12MAR85/F//*************-1*************`: the names are masked, the rest of the record is out of scope:
 
 ```xml
-<recognizer name="dateOfBirth" type="custom" supported_entity="DATE_OF_BIRTH">
-  <pattern name="DOCS birth date" score="0.9">(?&lt;=/)\d{2}[A-Z]{3}\d{2}(?=/[MFUX]I?/)</pattern>
-  <context>DOCS</context>
+<recognizer name="passengerName" type="custom" supported_entity="PERSON">
+  <pattern name="surname/given" score="0.9">(?&lt;![A-Z])[A-Z]{2,}(?:[ '-][A-Z]+)*/[A-Z]*(?:[ '-][A-Z]+)*</pattern>
 </recognizer>
 <allow_list match="regex">
   <item>^\d{4}$</item>
 </allow_list>
-<anonymizer entity="DATE_OF_BIRTH" type="mask" masking_char="*" />
+<anonymizer entity="PERSON" type="mask" masking_char="*" />
 <anonymizer entity="DEFAULT" type="mask" masking_char="#" />
 ```
 
-Patterns use syntax shared by .NET and the Python `regex` module and match case-insensitively. `<context>` and `<deny_list>` take space-separated words; a context word near a match raises its score. Loyalty, sensitive-attribute and financial entities mask with `#` so literal `*` separators stay distinguishable; the others use `*`.
+Patterns use syntax shared by .NET and the Python `regex` module and match case-insensitively. `<context>` and `<deny_list>` take space-separated words; a context word near a match raises its score. `PERSON` masks with `*`; `DEFAULT`, which applies only to Presidio's entities when default detection is on, masks with `#` so literal `*` separators stay distinguishable. The shipped allow-list items stop no recognizer the file defines; they are kept because, with default detection on, Presidio's `DATE_TIME` and other guesses would otherwise change dates such as `09NOV26`, times such as `1405`, `FQTR` and fare totals.
 
 ### Changing a recognizer or an action
 
-1. Edit `Configuration/recognizers/pnr.xml`: add or change a `<recognizer>`, an `<allow_list>` item or an `<anonymizer>`. Each custom recognizer has a one-line `Example:` comment with fictional values (such as `MILLER/JORDAN` or `DA12345678`); add one for a new entry, never with real data.
-2. Check parity: `src/.venv/Scripts/python.exe tests/run_sample_verification.py`. Every value in [tests/fixtures/parity-baseline.json](tests/fixtures/parity-baseline.json) must stay protected or be listed with a reason in [parity-exceptions.json](tests/fixtures/parity-exceptions.json) (WR-019); a released value fails this developer check, never the worker. Masking something the baseline does not list never fails it. Both files are value-free: sample, location, length, and an entity or a reason. The baseline was frozen from the field policies an earlier design used and cannot be regenerated. Every baseline entity type must have a custom recognizer or a Presidio predefined entity (`DetectionParityChecks -- config-checks`).
+1. Edit `Configuration/recognizers/pnr.xml`: add or change a `<recognizer>`, an `<allow_list>` item or an `<anonymizer>`. Each custom recognizer has a one-line `Example:` comment with fictional values (such as `MILLER/JORDAN`); add one for a new entry, never with real data.
+2. Check parity: `src/.venv/Scripts/python.exe tests/run_sample_verification.py`. The check is names-only: every `PERSON` value in [tests/fixtures/parity-baseline.json](tests/fixtures/parity-baseline.json) must stay protected or be listed with a reason in [parity-exceptions.json](tests/fixtures/parity-exceptions.json) (WR-019), and every listed exception must still be needed; a released name fails this developer check, never the worker. Every other baseline value is reported as out of scope (names-only), with a count, and never fails it; nor does masking something the baseline does not list. Both files are value-free: sample, location, length, and an entity or a reason. The baseline was frozen from the field policies an earlier design used and cannot be regenerated. Every `PERSON` baseline value must have a recognizer the file defines (`DetectionParityChecks -- config-checks`); Presidio's own `PERSON` does not count, because it does not run with default detection off. The checks run with the shipped `Presidio:DefaultDetection` off.
 3. Open a pull request. The recognizer file ships only inside the image built from it (PR-005), so a change reaches an environment by deploying that image. While decoded-text detection is a POC, that image is deployed to Dev only ([deployment plan](docs/aws-deployment-plan.md)).
 
 ### Detection log
@@ -178,7 +187,7 @@ Patterns use syntax shared by .NET and the Python `regex` module and match case-
 
 - **PII fields (changed):** an action changed the string (`decision=changed`).
 - **Non-PII fields (unchanged):** an allow-list item kept it (`allowed`), the `keep` operator left it (`kept`), or it is empty.
-- **Review (check these; each line has a fix):** the string was left unprotected (`nothing-detected`, or `below-threshold` with its score against the threshold), changed by an entity with no anonymizer of its own (`no-action`), changed by a spaCy guess (`spacy-guess`), or affected by an overlap or a cut result (`overlap`, `cut`). Each review line names its reasons and a fix, such as `fix="add a recognizer if this is personal data, or an allow-list item if it is not"`.
+- **Review (check these; each line has a fix):** the string was left unprotected (`nothing-detected`, or `below-threshold` with its score against the threshold), changed by an entity with no anonymizer of its own (`no-action`), changed by a spaCy guess (`spacy-guess`, only with `Presidio:DefaultDetection` on), or affected by an overlap or a cut result (`overlap`, `cut`). Each review line names its reasons and a fix, such as `fix="add a recognizer if this is personal data, or an allow-list item if it is not"`. With default detection off, every line names a recognizer the file defines, `allow_list` or `none`.
 
 Without the values flag a block holds no value, only lengths and character shapes, so it may be switched on in any environment. A string is located by its slot and its byte offset in the decoded payload (`offsets=payload`); the binary feed has no field names. A made-up example:
 
@@ -190,12 +199,12 @@ PNR 3f9a… DETECTION PUBLISHED file=PNR_DEMO.txt fields=4 pii=1 non-pii=1 revie
     slot 7 @0x00E0   len=4 shape=9999  recognizer=allow_list entity=- score=0.00 decision=allowed
   Review (check these; each line has a fix)
     slot 2 @0x0018   len=6 shape=AAA999  unchanged  recognizer=none entity=- score=0.00 decision=nothing-detected reason=nothing-detected fix="add a recognizer if this is personal data, or an allow-list item if it is not"
-    slot 18 @0x0288  len=8 shape=A9999999  unchanged  recognizer=UsLicenseRecognizer entity=US_DRIVER_LICENSE score=0.30<0.50 decision=below-threshold reason=below-threshold fix="add context words or raise the pattern score if this is personal data"
+    slot 18 @0x0288  len=5 shape=AAAAA  unchanged  recognizer=none entity=- score=0.00 decision=nothing-detected reason=nothing-detected fix="add a recognizer if this is personal data, or an allow-list item if it is not"
 ```
 
 An empty group is printed as `(none)`. A message dead-lettered after detection ran has `DEAD-LETTERED` and its reason in the header; a message rejected before detection (for example, malformed framing) has no block. Every line after the header is indented, so a log collector can keep the block as one entry (see the CloudWatch setting in the [deployment plan](docs/aws-deployment-plan.md)).
 
-**Acting on a review entry.** Follow its fix: for personal data that nothing detected, add a custom recognizer for the value's shape; for a value that is not personal data but a spaCy guess changed, add an allow-list item; for an entity without its own action, add an `<anonymizer>`. Then follow [Changing a recognizer or an action](#changing-a-recognizer-or-an-action).
+**Acting on a review entry.** Follow its fix: for personal data that nothing detected, add a custom recognizer for the value's shape; for a value that is not personal data but a spaCy guess changed (default detection on), add an allow-list item; for an entity without its own action, add an `<anonymizer>`. Then follow [Changing a recognizer or an action](#changing-a-recognizer-or-an-action).
 
 **Values in non-production (WR-020).** For testing in Local, Dev and QA, `Presidio:DetectionLogValues` (on by default, read at startup; `Presidio__DetectionLogValues=false` turns it off) adds the actual values: `"before" -> "after"` for a changed string, `"before"` for an unchanged one, and `-> not published` for a dead-lettered message. Values are JSON-encoded, so none of them can break a line:
 
@@ -210,20 +219,21 @@ PNR 3f9a… DETECTION PUBLISHED file=PNR_DEMO.txt fields=4 pii=1 non-pii=1 revie
 - It works only when the selected environment is `Local`, `Dev` or `QA` (an unset `DOTNET_ENVIRONMENT` falls back to `Local` and counts). In any other environment, such as `Prod`, the worker still starts: it switches the values flag off, prints one `WARNING` line, and writes value-free blocks only.
 - Blocks are written for published messages and for messages dead-lettered after detection ran.
 - Outside Local, while both `Presidio:DetectionLog` and `Presidio:DetectionLogValues` are on, the deployment's log group must keep entries for at most 7 days and be readable only by the PII team role. Either flag is switched only through a reviewed task-definition deploy. Because the values flag is on by default, switching the detection log on in `Dev` or `QA` is what starts writing values (PR-006, [deployment plan](docs/aws-deployment-plan.md)).
-- The test harness runs the same modes with `--detection-log on` and `--detection-log values`.
+- The test harness runs the same modes with `--detection-log on` and `--detection-log values`, and `--default-detection on|off` (off unless given) sets `Presidio:DefaultDetection` for its run.
 
-**Harness files.** Each before/after file in `logs/PNR/` holds the block with values right after the payload hex dump, so an offset can be looked up there. Each run also writes `detection-summary.txt` beside `report.json` (WR-021): every review-group field across the run, by slot and payload offset, with its review reasons, character shapes, a count and the file names. It holds no string value.
+**Harness files.** Each before/after file in `logs/PNR/` holds the block with values right after the payload hex dump, so an offset can be looked up there. Each run also writes `detection-summary.txt` beside `report.json` (WR-021): the detection mode the run used, then every review-group field across the run, by slot and payload offset, with its review reasons, character shapes, a count and the file names. It holds no string value.
 
 ### Results on the supplied samples
 
-Both PNR samples run through the real worker and local Presidio, and both are published. Of the 104 values the former field policies protected in them, 48 are protected and 56 are approved exceptions in [parity-exceptions.json](tests/fixtures/parity-exceptions.json): 7 binary strings of one to three characters (WR-015), and 49 values the Presidio-style rules no longer protect, accepted with one reason per category (18 free-text remarks with nothing detected, 12 remarks only partly masked, 7 six-character references, 5 short attribute codes, 4 standalone names and 3 phone numbers). The earlier field policies masked those by their position, which detection has no equivalent for. The value-free spike summary is in [tests/fixtures/spike-summary.json](tests/fixtures/spike-summary.json). In the samples, `PNR.txt` has 22 changed strings and 49 for review, and `PNR_02.txt` 2 and 19.
+Both PNR samples run through the real worker and local Presidio with the shipped `Presidio:DefaultDetection` off, and both are published. The 104 values the former field policies protected in them include 16 names in scope for the names-only check: 12 are protected and 4 are approved exceptions in [parity-exceptions.json](tests/fixtures/parity-exceptions.json), standalone names in which nothing is detected (the earlier field policies masked them by their position, which detection has no equivalent for). The other 88 baseline values are out of scope (names-only) and published as received. The value-free spike summary is in [tests/fixtures/spike-summary.json](tests/fixtures/spike-summary.json). In the samples, `PNR.txt` has 14 changed strings and 57 for review, and `PNR_02.txt` 3 and 18; no line is a `spacy-guess`.
 
 ### Known limits
 
+- Names only: with `Presidio:DefaultDetection` off, only passenger names in the shapes the file defines are protected. Dates of birth, document numbers, emails, phone numbers, tickets, loyalty numbers, payment references and addresses are published as received, as are names in free text or on their own.
 - A string in which nothing is detected is published unchanged (fail open, WR-014). Presidio's documentation notes that automated detection is not guaranteed to find all sensitive information; the detection log lists every such string under Review, and `detection-summary.txt` collects them, so a recognizer can be added.
-- spaCy NER guesses: it can detect an operational value (a PNR such as `JQWX4H` as `PERSON`, `JORDAN` in a seat remark as `LOCATION`, `1405` as `DATE_TIME`) and change it. Such lines are listed under Review as `spacy-guess`; an allow-list item keeps a value that must stay unchanged.
+- spaCy NER guesses (default detection on only): it can detect an operational value (a PNR such as `JQWX4H` as `PERSON`, `JORDAN` in a seat remark as `LOCATION`, `1405` as `DATE_TIME`) and change it. Such lines are listed under Review as `spacy-guess`; an allow-list item keeps a value that must stay unchanged.
 - Binary strings of one to three characters are published unchanged (WR-015), for example three-digit phone area codes.
-- An allow-list item releases every whole string it matches, whatever it holds. The shipped date item (`^\d{2}[A-Z]{3}\d{2}(?:\d{2})?$`) also keeps a standalone date of birth such as `12MAR85` in its own string, and the time item (`^\d{4}$`) a standalone card suffix or approval code; inside a longer string, such as a DOCS record, they stay masked.
+- An allow-list item releases every whole string it matches, whatever it holds. With default detection on, the shipped date item (`^\d{2}[A-Z]{3}\d{2}(?:\d{2})?$`) also keeps a standalone date of birth such as `12MAR85` in its own string, and the time item (`^\d{4}$`) a standalone card suffix or approval code.
 - A result longer than the text it replaces is cut (`<PERS` for a five-character name with `replace`) and listed for review; `mask` never is.
 - `hash` writes the first characters of a 64- or 128-character hex digest, as many as the value is wide, and is not listed as cut. Without `salt`, each value gets a random salt, so equal values do not hash alike; with a fixed `salt`, a short value cut to a few hex characters can be guessed by trying values, so prefer `mask` for short values.
 - Binary text that contains NUL bytes, such as UTF-16, is not recognised as text and is published unchanged. Producers send ASCII; the supplied exports use CCSID 437.
@@ -424,13 +434,13 @@ These logs contain original personal data and are written only under `.test-runs
 
 | Command | What it checks | Needs |
 | --- | --- | --- |
-| `dotnet run --project tests/WorkerChecks` | Environment selection, settings validation (including a route for a removed feed), ack-after-publish, outage retry, redelivery, max deliveries, dead-lettering, header filtering | nothing |
+| `dotnet run --project tests/WorkerChecks` | Environment selection, settings validation (including a route for a removed feed, and `Presidio:DefaultDetection`: bound, off by default, set per environment), ack-after-publish, outage retry, redelivery, max deliveries, dead-lettering, header filtering | nothing |
 | `dotnet run --project tests/Messaging.ContractTests` | The broker contract, on the in-memory broker; also on Solace when `SOLACE_CONTRACT_TESTS=1` and the local broker runs | nothing (Solace: local broker) |
-| `dotnet run --project tests/FeedPipelineChecks` | Detection with real Presidio on both samples, the operators and width fitting, per-string decisions and switches, fail-closed cases, parity regression, scheduling and dead-lettering through `FeedWorker` | Python venv |
+| `dotnet run --project tests/FeedPipelineChecks` | Detection with real Presidio on both samples, `Presidio:DefaultDetection` off and on with and without defined recognizers, the operators and width fitting, per-string decisions and switches, fail-closed cases, names-only parity regression, scheduling and dead-lettering through `FeedWorker` | Python venv |
 | `dotnet run --project tests/FeedRoundTripChecks` | Byte-exact round trips without anonymization | nothing |
 | `dotnet run --project tests/GenericCodecChecks` | The generic XDR scanner and codec on both samples | nothing |
-| `dotnet run --project tests/DetectionParityChecks -- config-checks` / `-- spike` | Recognizer file validation; parity of the protected values, rebuilds and throughput against the frozen baseline | nothing / Python venv |
-| `src/.venv/Scripts/python.exe -m unittest discover -s tests/unit-tests -p test_*.py` | The PNR samples through the harness against the baseline, template changes, recognizer patterns, the detection bridge, the value-free detection log and the project layout | built solution, Python venv |
+| `dotnet run --project tests/DetectionParityChecks -- config-checks` / `-- spike` | Recognizer file validation and name coverage; names-only parity of the baseline's `PERSON` values (the rest counted as out of scope), rebuilds and throughput against the frozen baseline | nothing / Python venv |
+| `src/.venv/Scripts/python.exe -m unittest discover -s tests/unit-tests -p test_*.py` | The PNR samples through the harness against the baseline's names, template changes, recognizer patterns, the detection bridge with `defaultDetection` off and on, the value-free detection log and the project layout | built solution, Python venv |
 | `src/.venv/Scripts/python.exe tests/run_sample_verification.py` | Both samples end to end | built solution, Python venv |
 
 The round-trip checks load the normal codec and workflow with a keep-everything protector, and compare complete input and output bytes, decoded payloads and field values over three cycles per example. Results go to a fresh `.test-runs/round-trip-*` folder. The same checks also run in `FeedPipelineChecks`.

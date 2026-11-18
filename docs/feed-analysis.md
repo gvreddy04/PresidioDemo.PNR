@@ -1,6 +1,6 @@
 # PNR feed sample review and structure
 
-> **Superseded design.** This review describes the per-feed parsers, field policies and the three XML files (`feed-policies.xml`, `xdr-layouts.xml`, `reference-layouts.xml`) that decoded-text detection replaced. Those files and parsers are removed. Protection now uses the generic decoder and the PNR recognizer file; see [Decoded-text detection](../README.md#decoded-text-detection). The sample review, the structure findings and the field meanings below stay valid as analysis; the configuration notes refer to the removed design. The protection results they produced are frozen, value-free, in [tests/fixtures/parity-baseline.json](../tests/fixtures/parity-baseline.json).
+> **Superseded design.** This review describes the per-feed parsers, field policies and the three XML files (`feed-policies.xml`, `xdr-layouts.xml`, `reference-layouts.xml`) that decoded-text detection replaced. Those files and parsers are removed. Protection now uses the generic decoder and the PNR recognizer file, which keeps passenger names only (`passengerName` and `memberName`); Presidio's predefined recognizers run too only with `Presidio:DefaultDetection` on, which is off by default. The other fields described below are published as received; see [Decoded-text detection](../README.md#decoded-text-detection). The sample review, the structure findings and the field meanings below stay valid as analysis; the configuration notes refer to the removed design. The protection results they produced are frozen, value-free, in [tests/fixtures/parity-baseline.json](../tests/fixtures/parity-baseline.json).
 >
 > This branch (`PNR-Worker`) keeps the PNR feed only. The review of the other feeds, and the configuration examples of the removed design (which used one of those feeds), are in the repository history at commit `dffbdad`.
 
@@ -33,7 +33,7 @@ Counts below describe populated binary text/capture fields under the removed fie
 | PNR.txt | 5,452 | 74 | 80 Mask |
 | PNR_02.txt | 1,780 | 33 | 24 Mask |
 
-With decoded-text detection, both samples are published through the real worker and local Presidio. Of the 104 values the former field policies protected, 97 are protected and 7 are approved exceptions (strings of one to three characters, WR-015). Both identified PNR occurrences stay unchanged, and source hashes, payload sizes, raw words, string counts, zero padding, record syntax, MQ headers, row framing and newline style are preserved.
+With decoded-text detection, both samples are published through the real worker and local Presidio, with `Presidio:DefaultDetection` off. The parity check is names-only: of the 104 values the former field policies protected, the 16 names are in scope, 12 of them protected and 4 approved exceptions (standalone names in which nothing is detected); the other 88 values are out of scope and published as received. Both identified PNR occurrences stay unchanged, and source hashes, payload sizes, raw words, string counts, zero padding, record syntax, MQ headers, row framing and newline style are preserved.
 
 ## Configuration behavior (removed design)
 
