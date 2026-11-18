@@ -56,7 +56,7 @@ public enum ReviewReason
     /// </summary>
     NoAction = 4,
     /// <summary>
-    /// Changed by a guess of the spaCy named-entity recognizer.
+    /// Changed by a guess of the spaCy named-entity recognizer; only possible with <c>Presidio:DefaultDetection</c> on.
     /// </summary>
     SpacyGuess = 8,
     /// <summary>
@@ -107,12 +107,16 @@ public sealed record DetectionOutcome(IReadOnlyDictionary<string, string> Values
 
 /// <summary>
 /// Protects one parsed message with its feed's recognizer file. Presidio only returns spans; every decision is made here.
-/// Each decoded string is decided on its own (WR-014): a whole-string allow-list match is published unchanged; otherwise
-/// each span at or above the threshold gets its entity's action (its own, else <c>DEFAULT</c>, else <c>replace</c>), and a
-/// string in which nothing is detected is published unchanged. Every result keeps the string's width (WR-015).
+/// The spans come from the recognizers the file defines and, only with <c>Presidio:DefaultDetection</c> on, from Presidio's
+/// predefined recognizers too. Each decoded string is decided on its own (WR-014): a whole-string allow-list match is
+/// published unchanged; otherwise each span at or above the threshold gets its entity's action (its own, else
+/// <c>DEFAULT</c>, else <c>replace</c>), and a string in which nothing is detected is published unchanged. Every result keeps
+/// the string's width (WR-015).
 /// </summary>
 /// <param name="files">The validated recognizer files by feed.</param>
-public sealed class DetectingFeedProtector(IReadOnlyDictionary<FeedType, RecognizerFile> files) : IFeedProtector
+/// <param name="defaultDetection">Whether Presidio's predefined recognizers run beside the defined ones
+/// (<c>Presidio:DefaultDetection</c>). When false they are not registered at all, so they never run.</param>
+public sealed class DetectingFeedProtector(IReadOnlyDictionary<FeedType, RecognizerFile> files, bool defaultDetection = false) : IFeedProtector
 {
 
     #region Fields and Constants
@@ -129,10 +133,21 @@ public sealed class DetectingFeedProtector(IReadOnlyDictionary<FeedType, Recogni
 
     #endregion
 
+    #region Properties, Indexers
+
+    /// <summary>
+    /// Gets whether Presidio's predefined recognizers run beside the recognizers each file defines.
+    /// </summary>
+    /// <value>The <c>Presidio:DefaultDetection</c> setting this protector was created with.</value>
+    public bool DefaultDetection => defaultDetection;
+
+    #endregion
+
     #region Methods
 
     /// <summary>
-    /// Builds every feed's Presidio registry. Call once after <see cref="PythonHost.Start"/>.
+    /// Builds every feed's Presidio registry, with Presidio's predefined recognizers only when <see cref="DefaultDetection"/>
+    /// is on. Call once after <see cref="PythonHost.Start"/>.
     /// </summary>
     /// <exception cref="InvalidDataException">The bridge rejected a configuration, such as an unknown predefined recognizer.</exception>
     public void Configure()
@@ -141,7 +156,7 @@ public sealed class DetectingFeedProtector(IReadOnlyDictionary<FeedType, Recogni
         {
             try
             {
-                PythonHost.Call("configure_feed", file.ToBridgeJson());
+                PythonHost.Call("configure_feed", file.ToBridgeJson(defaultDetection));
             }
             catch (Exception ex)
             {

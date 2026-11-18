@@ -2,7 +2,7 @@
 import struct
 import unittest
 
-from decoded_text_support import EXPECTED_REJECTIONS, PROJECT, baseline, payload, verify_published
+from decoded_text_support import EXPECTED_REJECTIONS, PROJECT, baseline, in_scope, payload, verify_published
 from pipeline_harness import run
 from test_feed_logs import blocks, leaked_values
 
@@ -62,9 +62,10 @@ class DecodedTextFeedTests(unittest.TestCase):
         for name, reason in EXPECTED_REJECTIONS.items():
             self.assertIn(reason, rejected[name])
 
-    def test_published_samples_keep_framing_and_protect_every_baseline_value(self):
+    def test_published_samples_keep_framing_and_protect_every_baseline_name(self):
+        # Names-only: every PERSON baseline value is protected or approved; every other value is out of scope.
         document, exceptions = baseline()
-        totals = {"protected": 0, "approved_exceptions": 0}
+        totals = {"protected": 0, "approved_exceptions": 0, "out_of_scope": 0}
         for key, original in self.inputs.items():
             feed, name = key.split("/")
             if "template-" in name or name in EXPECTED_REJECTIONS:
@@ -72,7 +73,8 @@ class DecodedTextFeedTests(unittest.TestCase):
             counts = verify_published(feed, name, original, self.harness.published(feed, name), document, exceptions)
             for k in totals:
                 totals[k] += counts[k]
-        self.assertEqual(totals["protected"] + totals["approved_exceptions"], len(document["protected"]))
+        self.assertEqual(totals["protected"] + totals["approved_exceptions"], sum(1 for e in document["protected"] if in_scope(e)))
+        self.assertEqual(totals["out_of_scope"], sum(1 for e in document["protected"] if not in_scope(e)))
         self.assertEqual(totals["approved_exceptions"], len(exceptions))
 
     def test_template_changes_still_publish_and_leave_an_undetected_new_value_unchanged(self):
@@ -84,9 +86,10 @@ class DecodedTextFeedTests(unittest.TestCase):
         document, exceptions = baseline()
         pnr = payload((SAMPLES / "PNR" / "PNR.txt").read_bytes())
         published = payload(self.harness.published("PNR", "PNR.txt"))
-        # Values the unchanged sample protects must stay protected; short values and listed exceptions are not checked.
+        # Names the unchanged sample protects must stay protected; short values, listed exceptions and values out of the
+        # names-only scope are not checked.
         values = [pnr[int(e["location"]):int(e["location"]) + e["length"]] for e in document["protected"]
-                  if e["sample"] == "PNR.txt" and e["length"] >= 4 and ("PNR.txt", e["location"]) not in exceptions]
+                  if in_scope(e) and e["sample"] == "PNR.txt" and e["length"] >= 4 and ("PNR.txt", e["location"]) not in exceptions]
         values = [v for v in values if v not in published]
         self.assertTrue(values)
         for name in ("template-removed-field.bin", "template-reordered-fields.bin"):

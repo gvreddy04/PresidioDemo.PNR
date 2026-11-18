@@ -17,7 +17,9 @@ from presidio_analyzer.nlp_engine import NlpEngineProvider
 
 if importlib.util.find_spec("en_core_web_lg") is None:
     raise RuntimeError("Install the bundled en_core_web_lg model before starting the listener.")
-# One spaCy engine (en_core_web_lg, Presidio's default configuration) shared by every feed's registry.
+# One spaCy engine (en_core_web_lg, Presidio's default configuration) shared by every feed's registry. The analyzer runs it
+# on every string it analyzes, also with default detection off: custom recognizers read its tokens and lemmas for their
+# context words, while its named entities are only acted on through the predefined SpacyRecognizer.
 nlp_engine = NlpEngineProvider().create_engine()
 
 
@@ -43,27 +45,32 @@ _feeds = {}
 def configure_feed(config_json):
     """Build one feed's Presidio registry from the .NET recognizer file (WR-014).
 
-    config_json holds feed, language, disabled (names of Presidio predefined recognizers switched off) and recognizers
-    (custom: name, entity, patterns of name, regex and score, context, denyList, denyListScore). Every predefined
-    recognizer runs unless it is switched off; spaCy NER provides PERSON, LOCATION, NRP and DATE_TIME. The score
-    threshold and every action are applied in .NET. Returns the feed name.
+    config_json holds feed, language, defaultDetection (Presidio:DefaultDetection), disabled (names of Presidio predefined
+    recognizers switched off) and recognizers (custom: name, entity, patterns of name, regex and score, context, denyList,
+    denyListScore). With defaultDetection false the registry holds the custom recognizers only, so no predefined
+    recognizer (and no spaCy PERSON, LOCATION, NRP or DATE_TIME guess) ever runs. With it true every predefined recognizer
+    runs too, unless it is switched off. The score threshold and every action are applied in .NET. Returns the feed name.
     """
     config = json.loads(config_json)
     language = config["language"]
+    default_detection = config["defaultDetection"]
+    if not isinstance(default_detection, bool):
+        raise ValueError("defaultDetection must be true or false")
     registry = RecognizerRegistry(supported_languages=[language])
+    # The predefined recognizers are loaded in both modes only so a misspelled name in the file stops startup either way.
     registry.load_predefined_recognizers(languages=[language], nlp_engine=nlp_engine)
     disabled = set(config["disabled"])
     unknown = (disabled | set(config.get("enabled", []))) - {r.name for r in registry.recognizers}
     if unknown:
         raise ValueError("Unknown predefined recognizer: " + ", ".join(sorted(unknown)))
-    registry.recognizers = [r for r in registry.recognizers if r.name not in disabled]
+    registry.recognizers = [r for r in registry.recognizers if default_detection and r.name not in disabled]
     for item in config["recognizers"]:
         patterns = [Pattern(p["name"], p["regex"], float(p["score"])) for p in item["patterns"]]
         registry.add_recognizer(PatternRecognizer(supported_entity=item["entity"], name=item["name"], supported_language=language,
                                                   patterns=patterns or None, deny_list=item["denyList"] or None,
                                                   context=item["context"] or None, deny_list_score=float(item["denyListScore"])))
-    # An empty registry would make AnalyzerEngine load every default recognizer, so a feed whose every recognizer is
-    # switched off gets no engine and detects nothing.
+    # An empty registry would make AnalyzerEngine load every default recognizer, so a feed with no recognizer left (no
+    # custom one and default detection off, or every one switched off) gets no engine and detects nothing.
     engine = AnalyzerEngine(registry=registry, nlp_engine=nlp_engine, supported_languages=[language]) if registry.recognizers else None
     _feeds[config["feed"]] = (BatchAnalyzerEngine(engine) if engine else None, language)
     return config["feed"]

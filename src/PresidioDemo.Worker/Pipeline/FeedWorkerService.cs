@@ -78,6 +78,14 @@ public sealed class FeedWorkerService(IMessagingConnection connection, IMessageC
             pythonStarted = true;
             var protector = pipeline.CreateProtector();
             protector.Configure();
+            if (protector.DefaultDetection)
+            {
+                log.LogInformation("Default detection on (Presidio:DefaultDetection=true): the recognizers each feed's file defines and Presidio's predefined recognizers act.");
+            }
+            else
+            {
+                log.LogInformation("Default detection off (Presidio:DefaultDetection=false): only the recognizers each feed's file defines act.");
+            }
             var processor = new FeedMessageProcessor(pipeline.CreateRouter(protector));
             // ConsumersPerTask workers per feed, each on its own broker flow: .NET parsing and broker round trips overlap
             // across consumers and feeds; shared Python calls are serialized.

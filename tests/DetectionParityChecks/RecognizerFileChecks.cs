@@ -73,8 +73,11 @@ public static class RecognizerFileChecks
                 && bare.ActionFor("PERSON") is ({ Operator: AnonymizerOperator.Replace }, false), "an empty file loads with Presidio's defaults and replace", ref passed);
             Check(Load(scratch, "<recognizers feed=\"PNR\"><allow_list><item>FQTR</item></allow_list></recognizers>").AllowList is { Regex: false } exact
                 && exact.MatchesWhole("FQTR") && !exact.MatchesWhole("fqtr"), "an exact allow list compares the whole text exactly", ref passed);
-            Check(file.ToBridgeJson().Contains("\"disabled\":[\"CryptoRecognizer\"]", StringComparison.Ordinal)
-                && file.ToBridgeJson().Contains("\"denyList\":[\"MR\",\"MRS\",\"DR\"]", StringComparison.Ordinal), "the bridge JSON carries switches and deny lists", ref passed);
+            Check(file.ToBridgeJson(false).Contains("\"disabled\":[\"CryptoRecognizer\"]", StringComparison.Ordinal)
+                && file.ToBridgeJson(false).Contains("\"denyList\":[\"MR\",\"MRS\",\"DR\"]", StringComparison.Ordinal), "the bridge JSON carries switches and deny lists", ref passed);
+            Check(file.ToBridgeJson(false).Contains("\"defaultDetection\":false", StringComparison.Ordinal)
+                && file.ToBridgeJson(true).Contains("\"defaultDetection\":true", StringComparison.Ordinal),
+                "the bridge JSON carries Presidio:DefaultDetection", ref passed);
 
             Reject(scratch, "<recognizers feed=\"PNR\"", "not well-formed XML", ref passed);
             Reject(scratch, "<?xml version=\"1.0\"?><!DOCTYPE r [<!ENTITY x \"y\">]><recognizers feed=\"PNR\" />", "a DTD", ref passed);

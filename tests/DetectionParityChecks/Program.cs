@@ -7,10 +7,11 @@ using PresidioDemo.DetectionParity;
 //   The parity baseline (tests/fixtures/parity-baseline.json) was frozen from the removed field policies and is
 //   read-only; see ParityBaseline.
 //   config-checks   Loads the PNR recognizer file and requires invalid files to stop startup (V-04).
-//   bridge-json     Prints each feed's Presidio bridge configuration, one JSON document per line (Python tests).
+//   bridge-json     Prints each feed's Presidio bridge configuration, one JSON document per line (Python tests), with
+//                   the shipped Presidio:DefaultDetection off.
 //   detection-log on|off   Runs all samples through the decoded-text path and prints the value-free detection log
 //                          when on (V-05). The worker reads the same switch from Presidio:DetectionLog.
-//   spike [rounds]  Parity of the protected values (WR-019), rebuilds, negative samples and
+//   spike [rounds]  Names-only parity of the protected PERSON values (WR-019), rebuilds, negative samples and
 //                   throughput (V-01, V-02, V-11). Writes .test-runs/spike-*/summary.json (value-free) and report.json
 //                   (values, Local only). Exit 0 when parity holds, 2 when it does not.
 // Exit codes: 0 success, 1 failure.
@@ -28,7 +29,7 @@ if (args is ["bridge-json"])
 {
     foreach (var set in RecognizerFileReader.ReadAll(Path.Combine(root, "src", "PresidioDemo.Core", "Configuration", "recognizers")).Values)
     {
-        Console.WriteLine(set.ToBridgeJson());
+        Console.WriteLine(set.ToBridgeJson(defaultDetection: false));
     }
     return 0;
 }

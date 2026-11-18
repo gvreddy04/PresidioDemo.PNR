@@ -154,6 +154,37 @@ foreach (string outside in new[] { Path.GetFullPath(Path.Combine(runRoot, "..", 
 }
 Require(PresidioOptions.Load(local, runRoot).RecognizerDirectory == Path.GetFullPath("Configuration/recognizers", runRoot),
     "Presidio:RecognizerDirectory resolves against the application folder");
+// Presidio:DefaultDetection: bound strictly like its siblings, off by default, set per environment or by variable.
+Require(local["Presidio:DefaultDetection"] == "False" && !new PresidioOptions().DefaultDetection,
+    "the shipped settings list Presidio:DefaultDetection as false, which is also the default when it is left out");
+Require(!PresidioOptions.Load(local, runRoot).DefaultDetection && !PresidioOptions.Load(dev, runRoot).DefaultDetection,
+    "Presidio:DefaultDetection binds as false in Local and Dev, so only the defined recognizers act");
+var defaultDetectionOn = new ConfigurationBuilder().AddConfiguration(local).AddInMemoryCollection([new("Presidio:DefaultDetection", "true")]).Build();
+Require(PresidioOptions.Load(defaultDetectionOn, runRoot).DefaultDetection, "Presidio:DefaultDetection=true binds and switches default detection on");
+{
+    var json = JsonNode.Parse(File.ReadAllText(settingsFile))!;
+    json["Environments"]!["Dev"]!["Presidio"] = new JsonObject { ["DefaultDetection"] = true };
+    string path = Path.Combine(runRoot, "appsettings.default-detection.json");
+    File.WriteAllText(path, json.ToJsonString());
+    var (devOn, _) = EnvironmentConfiguration.Build(path, name => name == EnvironmentConfiguration.EnvironmentVariable ? "Dev" : null);
+    var (localStill, _) = EnvironmentConfiguration.Build(path, noVariables);
+    Require(PresidioOptions.Load(devOn, runRoot).DefaultDetection && !PresidioOptions.Load(localStill, runRoot).DefaultDetection,
+        "an environment block overrides Presidio:DefaultDetection for that environment only");
+}
+Environment.SetEnvironmentVariable("Presidio__DefaultDetection", "true");
+try
+{
+    var (variable, _) = EnvironmentConfiguration.Build(settingsFile, noVariables);
+    Require(PresidioOptions.Load(variable, runRoot).DefaultDetection, "the Presidio__DefaultDetection environment variable overrides the settings file");
+}
+finally { Environment.SetEnvironmentVariable("Presidio__DefaultDetection", null); }
+var defaultDetectionBad = new ConfigurationBuilder().AddConfiguration(local).AddInMemoryCollection([new("Presidio:DefaultDetection", "sometimes")]).Build();
+Reject(() => PresidioOptions.Load(defaultDetectionBad, runRoot), "a Presidio:DefaultDetection value other than true or false stops startup");
+var defaultDetectionTypo = new ConfigurationBuilder().AddConfiguration(local).AddInMemoryCollection([new("Presidio:DefaultDetections", "true")]).Build();
+Reject(() => PresidioOptions.Load(defaultDetectionTypo, runRoot), "a misspelled default-detection key stops startup");
+Require(!FeedPipelineConfiguration.Load(Path.Combine(project, "src", "PresidioDemo.Core", "Configuration", "recognizers")).DefaultDetection
+    && FeedPipelineConfiguration.Load(Path.Combine(project, "src", "PresidioDemo.Core", "Configuration", "recognizers"), defaultDetection: true).CreateProtector().DefaultDetection,
+    "the setting reaches the protector through the pipeline configuration, off unless given");
 
 // FeedWorker delivery rules
 var options = MessagingOptions.Load(local);

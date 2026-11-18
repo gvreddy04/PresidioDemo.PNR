@@ -22,7 +22,7 @@ try
     var presidio = PresidioOptions.Load(configuration, baseDirectory);
     // Outside Local, Dev and QA the values flag is switched off instead of stopping the worker (QF-26111601).
     valuesSwitchedOff = presidio.ApplyValuesEnvironment(environment);
-    var pipeline = FeedPipelineConfiguration.Load(presidio.RecognizerDirectory);
+    var pipeline = FeedPipelineConfiguration.Load(presidio.RecognizerDirectory, presidio.DefaultDetection);
 
     var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
     {

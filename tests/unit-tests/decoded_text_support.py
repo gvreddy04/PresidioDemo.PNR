@@ -1,7 +1,8 @@
 """Value-free verification of decoded-text protection against the frozen parity baseline (WR-019).
 
 Shared by test_decoded_text_feeds.py and tests/run_sample_verification.py. Nothing here prints or returns a sample
-value; failures name the sample, location and check only.
+value; failures name the sample, location and check only. The check is names-only: the recognizer files keep passenger
+names only, so only baseline values whose entity is PERSON are checked; every other value is counted as out of scope.
 """
 from pathlib import Path
 import json
@@ -10,6 +11,13 @@ PROJECT = Path(__file__).resolve().parents[2]
 FIXTURES = PROJECT / "tests" / "fixtures"
 # No supplied PNR sample is a negative test; a negative sample added later is listed here with its expected reason.
 EXPECTED_REJECTIONS = {}
+# The one baseline entity the parity check covers (names-only).
+NAME_ENTITY = "PERSON"
+
+
+def in_scope(entry):
+    """Return whether the names-only parity check covers a baseline value."""
+    return entry["entity"] == NAME_ENTITY
 
 
 def payload(message):
@@ -37,7 +45,7 @@ def verify_published(feed, name, original, output, document=None, exceptions=Non
     if document is None:
         document, exceptions = baseline()
     before, after = payload(original), payload(output)
-    checks = {"protected": 0, "approved_exceptions": 0}
+    checks = {"protected": 0, "approved_exceptions": 0, "out_of_scope": 0}
     if original[:2] == b"A ":
         if header(original) != header(output):
             raise AssertionError(f"{name}: MQ metadata changed")
@@ -55,6 +63,10 @@ def verify_published(feed, name, original, output, document=None, exceptions=Non
             raise AssertionError(f"{name}: byte {index} changed to a character that is not printable ASCII")
     for entry in document["protected"]:
         if entry["sample"] != name:
+            continue
+        if not in_scope(entry):
+            # Names-only: reported with a count, never failed.
+            checks["out_of_scope"] += 1
             continue
         start, length = int(entry["location"]), entry["length"]
         caught = all(b == 0x2A or b != a for b, a in zip(before[start:start + length], after[start:start + length]))

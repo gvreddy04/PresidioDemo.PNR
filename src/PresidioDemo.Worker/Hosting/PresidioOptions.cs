@@ -20,6 +20,15 @@ public sealed class PresidioOptions
     #region Properties, Indexers
 
     /// <summary>
+    /// Gets or sets whether Presidio's predefined recognizers (email, phone, credit card, IP address, IBAN, the spaCy
+    /// PERSON, LOCATION, NRP and DATE_TIME guesses and the rest) run beside the recognizers defined in each feed's
+    /// recognizer file. Off in the base settings, so only the defined recognizers act; an environment settings block or the
+    /// <c>Presidio__DefaultDetection</c> environment variable sets it for one feed service. Read at startup.
+    /// </summary>
+    /// <value>True to run the predefined recognizers too, except those the file switches off.</value>
+    public bool DefaultDetection { get; set; }
+
+    /// <summary>
     /// Gets or sets whether the detection log is written (WR-018). Off in the base settings and on in the Local environment
     /// (QF-26111601); an environment settings block or the <c>Presidio__DetectionLog</c> environment variable sets it for one
     /// feed service. Read at startup.

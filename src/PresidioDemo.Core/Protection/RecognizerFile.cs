@@ -69,8 +69,8 @@ public sealed record AllowList(bool Regex, IReadOnlyList<string> Items, IReadOnl
 /// <param name="Recognizers">The custom recognizers.</param>
 /// <param name="AllowList">The whole-string allow list.</param>
 /// <param name="Anonymizers">The actions by entity, including <c>DEFAULT</c> when configured.</param>
-/// <param name="Enabled">The names of Presidio predefined recognizers the file lists as enabled; they run anyway, but their names
-/// are checked so a typo stops startup.</param>
+/// <param name="Enabled">The names of Presidio predefined recognizers the file lists as enabled. Like every predefined
+/// recognizer they run only while <c>Presidio:DefaultDetection</c> is on, but their names are checked so a typo stops startup.</param>
 public sealed record RecognizerFile(FeedType Feed, string Language, double Threshold, IReadOnlyList<string> Disabled,
     IReadOnlyList<CustomRecognizer> Recognizers, AllowList AllowList, IReadOnlyDictionary<string, AnonymizerAction> Anonymizers,
     IReadOnlyList<string>? Enabled = null)
@@ -91,11 +91,15 @@ public sealed record RecognizerFile(FeedType Feed, string Language, double Thres
     /// <summary>
     /// Returns the JSON document the Python bridge uses to build this feed's Presidio registry.
     /// </summary>
-    /// <returns>Language, switched-off predefined recognizers and custom recognizers; .NET applies the threshold and actions.</returns>
-    public string ToBridgeJson() => JsonSerializer.Serialize(new
+    /// <param name="defaultDetection">Whether Presidio's predefined recognizers join the custom ones
+    /// (<c>Presidio:DefaultDetection</c>); when false the bridge registers the custom recognizers only.</param>
+    /// <returns>Language, the default-detection switch, switched-off predefined recognizers and custom recognizers; .NET
+    /// applies the threshold and actions.</returns>
+    public string ToBridgeJson(bool defaultDetection) => JsonSerializer.Serialize(new
     {
         feed = FeedCatalog.Get(Feed).FolderName,
         language = Language,
+        defaultDetection,
         disabled = Disabled,
         enabled = Enabled ?? [],
         recognizers = Recognizers.Select(r => new

@@ -4,24 +4,13 @@ using PresidioDemo.Core.Protection;
 namespace PresidioDemo.DetectionParity;
 
 /// <summary>
-/// Checks the shipped recognizer file (WR-014): it loads, declares the PNR feed's custom recognizers, and every entity type
-/// of the frozen baseline is covered by a custom recognizer or by a Presidio predefined entity.
+/// Checks the shipped recognizer file (WR-014): it loads, defines passenger-name (PERSON) recognizers only, and every
+/// PERSON value of the frozen baseline has a custom recognizer in its feed's file. With <c>Presidio:DefaultDetection</c>
+/// off (the shipped default) Presidio's own PERSON guesses do not run, so only a recognizer the file defines counts.
+/// Every other baseline value is out of scope (names-only).
 /// </summary>
 public static class ConfigurationChecks
 {
-
-    #region Fields and Constants
-
-    /// <summary>
-    /// The entity types Presidio's predefined recognizers detect in English (Presidio 2.2.364), which run unless switched off.
-    /// </summary>
-    public static readonly IReadOnlySet<string> PredefinedEntities = new HashSet<string>(StringComparer.Ordinal)
-    {
-        "CREDIT_CARD", "CRYPTO", "DATE_TIME", "EMAIL_ADDRESS", "IBAN_CODE", "IP_ADDRESS", "LOCATION", "MAC_ADDRESS", "MEDICAL_LICENSE",
-        "NRP", "PERSON", "PHONE_NUMBER", "UK_NHS", "URL", "US_BANK_NUMBER", "US_DRIVER_LICENSE", "US_ITIN", "US_PASSPORT", "US_SSN"
-    };
-
-    #endregion
 
     #region Methods
 
@@ -32,38 +21,47 @@ public static class ConfigurationChecks
     /// <returns>The number of checks that passed.</returns>
     public static int Run(string root)
     {
+        const FeedType Feed = FeedType.PNR;
+        string folder = FeedCatalog.Get(Feed).FolderName;
         string directory = Path.Combine(root, "src", "PresidioDemo.Core", "Configuration", "recognizers");
         var files = RecognizerFileReader.ReadAll(directory);
         int passed = 0;
-        Check(files.Count == FeedCatalog.All.Count && files.ContainsKey(FeedType.PNR), "the PNR recognizer file loads", ref passed);
-        var pnr = files[FeedType.PNR];
-        Check(pnr.Recognizers.Any(r => r.Entity == "DATE_OF_BIRTH") && pnr.Recognizers.Any(r => r.Entity == "PERSON"),
-            "date-of-birth and passenger-name recognizers are declared", ref passed);
-        Check(pnr.Anonymizers.ContainsKey(FeedAnonymizer.DefaultEntity), "the shipped file sets a DEFAULT anonymizer", ref passed);
+        Check(files.Count == FeedCatalog.All.Count && files.ContainsKey(Feed), $"the {folder} recognizer file loads", ref passed);
+        var file = files[Feed];
+        Check(file.Recognizers.Count > 0 && file.Recognizers.All(r => r.Entity == ParityBaseline.NameEntity),
+            $"the {folder} file defines passenger-name ({ParityBaseline.NameEntity}) recognizers only: " + string.Join(", ", file.Recognizers.Select(r => r.Name)), ref passed);
+        Check(file.Anonymizers.ContainsKey(ParityBaseline.NameEntity) && file.Anonymizers.ContainsKey(FeedAnonymizer.DefaultEntity),
+            "the shipped file sets PERSON and DEFAULT anonymizers", ref passed);
         var baseline = ParityBaseline.Load(root);
-        var uncovered = UncoveredEntities(baseline, files);
-        Check(uncovered.Count == 0, "every baseline entity has a custom recognizer or a Presidio predefined entity"
+        int names = baseline.Protected.Count(ParityBaseline.InScope);
+        var uncovered = UncoveredNames(baseline, files);
+        Check(uncovered.Count == 0, $"every PERSON baseline value has a recognizer ({names} names in scope, "
+            + $"{baseline.Protected.Count - names} other baseline values out of scope, names-only)"
             + (uncovered.Count == 0 ? "" : ": missing " + string.Join(", ", uncovered)), ref passed);
-        var withoutDateOfBirth = new Dictionary<FeedType, RecognizerFile>(files)
+        // A made-up baseline with one name, so the check is shown to fail in every feed, including one without names.
+        var oneName = baseline with { Protected = [new ParityEntry("made-up.bin", folder, "0", 4, ParityBaseline.NameEntity)] };
+        var withoutNames = new Dictionary<FeedType, RecognizerFile>(files)
         {
-            [FeedType.PNR] = pnr with { Recognizers = pnr.Recognizers.Where(r => r.Entity != "DATE_OF_BIRTH").ToArray() },
+            [Feed] = file with { Recognizers = file.Recognizers.Where(r => r.Entity != ParityBaseline.NameEntity).ToArray() },
         };
-        Check(UncoveredEntities(baseline, withoutDateOfBirth).Contains("PNR DATE_OF_BIRTH"),
-            "the coverage check reports a baseline entity removed from its feed's file", ref passed);
+        Check(UncoveredNames(oneName, files).Count == 0 && UncoveredNames(oneName, withoutNames).SequenceEqual([folder + " " + ParityBaseline.NameEntity]),
+            "the coverage check reports a feed with a baseline name but no name recognizer", ref passed);
         return passed;
     }
 
     /// <summary>
-    /// Returns the baseline entity types, per feed, that neither a custom recognizer nor a Presidio predefined entity covers.
+    /// Returns the feeds whose baseline has a PERSON value but whose file defines no PERSON recognizer. Presidio's
+    /// predefined PERSON does not count: it does not run with <c>Presidio:DefaultDetection</c> off.
     /// </summary>
     /// <param name="baseline">The frozen baseline.</param>
     /// <param name="files">The recognizer files by feed.</param>
-    /// <returns>"FEED ENTITY" entries in ordinal order.</returns>
-    public static IReadOnlyList<string> UncoveredEntities(ParityBaselineDocument baseline, IReadOnlyDictionary<FeedType, RecognizerFile> files) =>
+    /// <returns>"FEED PERSON" entries in ordinal order.</returns>
+    public static IReadOnlyList<string> UncoveredNames(ParityBaselineDocument baseline, IReadOnlyDictionary<FeedType, RecognizerFile> files) =>
         baseline.Protected
+            .Where(ParityBaseline.InScope)
             .Select(e => (Type: FeedCatalog.All.Single(f => f.FolderName == e.Feed).Type, Name: e.Feed, e.Entity))
             .Distinct()
-            .Where(e => !files[e.Type].Recognizers.Any(r => r.Entity == e.Entity) && !PredefinedEntities.Contains(e.Entity))
+            .Where(e => !files[e.Type].Recognizers.Any(r => r.Entity == e.Entity))
             .Select(e => e.Name + " " + e.Entity)
             .Order(StringComparer.Ordinal)
             .ToArray();

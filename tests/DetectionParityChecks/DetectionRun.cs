@@ -40,10 +40,13 @@ public static class DetectionRun
     /// Loads the recognizer sets and configures the Python bridge. Python must be started.
     /// </summary>
     /// <param name="root">The repository root.</param>
+    /// <param name="defaultDetection">Whether Presidio's predefined recognizers run too; off, the shipped
+    /// <c>Presidio:DefaultDetection</c>, unless given.</param>
     /// <returns>The configured protector.</returns>
-    public static DetectingFeedProtector CreateProtector(string root)
+    public static DetectingFeedProtector CreateProtector(string root, bool defaultDetection = false)
     {
-        var protector = new DetectingFeedProtector(RecognizerFileReader.ReadAll(Path.Combine(root, "src", "PresidioDemo.Core", "Configuration", "recognizers")));
+        var protector = new DetectingFeedProtector(RecognizerFileReader.ReadAll(Path.Combine(root, "src", "PresidioDemo.Core", "Configuration", "recognizers")),
+            defaultDetection);
         protector.Configure();
         return protector;
     }
@@ -86,6 +89,8 @@ public static class DetectionRun
     public static async Task WriteLogAsync(string root, bool enabled)
     {
         var protector = CreateProtector(root);
+        // Value-free: names the mode the run used, so a reader knows whether Presidio's predefined recognizers could act.
+        Console.WriteLine($"DEFAULT-DETECTION {(protector.DefaultDetection ? "on" : "off")}");
         foreach (string path in SampleFiles.All(root))
         {
             var result = await ProcessAsync(protector, path, CancellationToken.None);

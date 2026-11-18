@@ -39,12 +39,19 @@ public sealed record ParityBaselineDocument(string Source, IReadOnlyList<string>
 
 /// <summary>
 /// The WR-019 parity baseline fixture. It was frozen from the reviewed field policies before they were removed
-/// (work item 2026110501, T-002) and cannot be regenerated; a recognizer change must keep parity with it.
+/// (work item 2026110501, T-002) and cannot be regenerated; a recognizer change must keep parity with it. The recognizer
+/// files keep passenger names only, so the gate checks the baseline values whose entity is <see cref="NameEntity"/> and
+/// reports every other value as out of scope (names-only) without failing.
 /// </summary>
 public static class ParityBaseline
 {
 
     #region Fields and Constants
+
+    /// <summary>
+    /// The one entity the parity gate checks: passenger names.
+    /// </summary>
+    public const string NameEntity = "PERSON";
 
     /// <summary>
     /// The JSON options used for the fixtures: indented, camel case.
@@ -69,6 +76,13 @@ public static class ParityBaseline
     public static ParityBaselineDocument Load(string root) =>
         JsonSerializer.Deserialize<ParityBaselineDocument>(File.ReadAllText(Path.Combine(root, "tests", "fixtures", "parity-baseline.json")), JsonOptions)
             ?? throw new InvalidDataException("The parity baseline is missing.");
+
+    /// <summary>
+    /// Returns whether the parity gate checks a baseline value: only passenger names are in scope (names-only).
+    /// </summary>
+    /// <param name="entry">The baseline value.</param>
+    /// <returns>True for a <see cref="NameEntity"/> value.</returns>
+    public static bool InScope(ParityEntry entry) => entry.Entity == NameEntity;
 
     #endregion
 }
