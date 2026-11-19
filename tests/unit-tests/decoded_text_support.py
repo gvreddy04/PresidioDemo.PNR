@@ -1,23 +1,33 @@
 """Value-free verification of decoded-text protection against the frozen parity baseline (WR-019).
 
 Shared by test_decoded_text_feeds.py and tests/run_sample_verification.py. Nothing here prints or returns a sample
-value; failures name the sample, location and check only. The check is names-only: the recognizer files keep passenger
-names only, so only baseline values whose entity is PERSON are checked; every other value is counted as out of scope.
+value; failures name the sample, location and check only. The check covers the baseline values whose entity a recognizer
+defined in the feed's recognizer file produces (a custom or lone-name recognizer); every other value is counted as out of
+scope, as the spike does.
 """
+from functools import lru_cache
 from pathlib import Path
 import json
+import xml.etree.ElementTree as ET
 
 PROJECT = Path(__file__).resolve().parents[2]
 FIXTURES = PROJECT / "tests" / "fixtures"
+RECOGNIZERS = PROJECT / "src" / "PresidioDemo.Core" / "Configuration" / "recognizers"
 # No supplied PNR sample is a negative test; a negative sample added later is listed here with its expected reason.
 EXPECTED_REJECTIONS = {}
-# The one baseline entity the parity check covers (names-only).
-NAME_ENTITY = "PERSON"
+
+
+@lru_cache(maxsize=None)
+def defined_entities(feed):
+    """Return the entities the enabled custom and lone-name recognizers of a feed's recognizer file produce."""
+    root = ET.parse(RECOGNIZERS / (feed.lower() + ".xml")).getroot()
+    return frozenset(r.get("supported_entity") for r in root.iter("recognizer")
+                     if r.get("type", "custom") in ("custom", "lone_name") and r.get("enabled", "true") == "true")
 
 
 def in_scope(entry):
-    """Return whether the names-only parity check covers a baseline value."""
-    return entry["entity"] == NAME_ENTITY
+    """Return whether the parity check covers a baseline value: a recognizer its feed's file defines produces its entity."""
+    return entry["entity"] in defined_entities(entry["feed"])
 
 
 def payload(message):
@@ -65,7 +75,7 @@ def verify_published(feed, name, original, output, document=None, exceptions=Non
         if entry["sample"] != name:
             continue
         if not in_scope(entry):
-            # Names-only: reported with a count, never failed.
+            # No recognizer the file defines produces this entity: reported with a count, never failed.
             checks["out_of_scope"] += 1
             continue
         start, length = int(entry["location"]), entry["length"]

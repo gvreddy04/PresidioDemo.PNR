@@ -11,9 +11,9 @@ using PresidioDemo.DetectionParity;
 //                   the shipped Presidio:DefaultDetection off.
 //   detection-log on|off   Runs all samples through the decoded-text path and prints the value-free detection log
 //                          when on (V-05). The worker reads the same switch from Presidio:DetectionLog.
-//   spike [rounds]  Names-only parity of the protected PERSON values (WR-019), rebuilds, negative samples and
-//                   throughput (V-01, V-02, V-11). Writes .test-runs/spike-*/summary.json (value-free) and report.json
-//                   (values, Local only). Exit 0 when parity holds, 2 when it does not.
+//   spike [rounds]  Parity of the baseline values in scope (WR-019; their entity has a recognizer in the file), rebuilds,
+//                   negative samples and throughput (V-01, V-02, V-11). Writes .test-runs/spike-*/summary.json
+//                   (value-free) and report.json (values, Local only). Exit 0 when parity holds, 2 when it does not.
 // Exit codes: 0 success, 1 failure.
 string root = AppContext.BaseDirectory;
 while (!File.Exists(Path.Combine(root, "PresidioDemo.slnx")))

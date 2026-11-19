@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using PresidioDemo.Core.Models;
+using PresidioDemo.Core.Protection;
 
 namespace PresidioDemo.DetectionParity;
 
@@ -17,7 +18,7 @@ namespace PresidioDemo.DetectionParity;
 public sealed record ParityEntry(string Sample, string Feed, string Location, int Length, string Entity);
 
 /// <summary>
-/// One PNR occurrence that today's policies keep unchanged, located without its value.
+/// One PNR (booking reference) occurrence that today's policies keep unchanged, located without its value.
 /// </summary>
 /// <param name="Sample">The sample file name.</param>
 /// <param name="Feed">The feed folder name.</param>
@@ -39,9 +40,9 @@ public sealed record ParityBaselineDocument(string Source, IReadOnlyList<string>
 
 /// <summary>
 /// The WR-019 parity baseline fixture. It was frozen from the reviewed field policies before they were removed
-/// (work item 2026110501, T-002) and cannot be regenerated; a recognizer change must keep parity with it. The recognizer
-/// files keep passenger names only, so the gate checks the baseline values whose entity is <see cref="NameEntity"/> and
-/// reports every other value as out of scope (names-only) without failing.
+/// (work item 2026110501, T-002) and cannot be regenerated; a recognizer change must keep parity with it. The gate checks
+/// the baseline values whose entity a recognizer defined in the feed's file produces (a custom or lone-name recognizer,
+/// see <see cref="RecognizerFile.DefinedEntities"/>) and reports every other value as out of scope without failing.
 /// </summary>
 public static class ParityBaseline
 {
@@ -49,7 +50,7 @@ public static class ParityBaseline
     #region Fields and Constants
 
     /// <summary>
-    /// The one entity the parity gate checks: passenger names.
+    /// The passenger-name entity, which every feed's file must cover.
     /// </summary>
     public const string NameEntity = "PERSON";
 
@@ -78,11 +79,22 @@ public static class ParityBaseline
             ?? throw new InvalidDataException("The parity baseline is missing.");
 
     /// <summary>
-    /// Returns whether the parity gate checks a baseline value: only passenger names are in scope (names-only).
+    /// Returns whether the parity gate checks a baseline value: its entity is one a recognizer defined in its feed's file
+    /// produces. Presidio's predefined entities do not count, because they do not run with default detection off.
     /// </summary>
     /// <param name="entry">The baseline value.</param>
-    /// <returns>True for a <see cref="NameEntity"/> value.</returns>
-    public static bool InScope(ParityEntry entry) => entry.Entity == NameEntity;
+    /// <param name="files">The recognizer files by feed.</param>
+    /// <returns>True when the value is in scope.</returns>
+    public static bool InScope(ParityEntry entry, IReadOnlyDictionary<FeedType, RecognizerFile> files) =>
+        files[FeedCatalog.All.Single(f => f.FolderName == entry.Feed).Type].DefinedEntities.Contains(entry.Entity);
+
+    /// <summary>
+    /// Loads the shipped recognizer files, which set the gate's scope.
+    /// </summary>
+    /// <param name="root">The repository root.</param>
+    /// <returns>The validated files by feed.</returns>
+    public static IReadOnlyDictionary<FeedType, RecognizerFile> Recognizers(string root) =>
+        RecognizerFileReader.ReadAll(Path.Combine(root, "src", "PresidioDemo.Core", "Configuration", "recognizers"));
 
     #endregion
 }

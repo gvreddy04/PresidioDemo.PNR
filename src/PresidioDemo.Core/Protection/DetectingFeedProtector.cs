@@ -114,9 +114,11 @@ public sealed record DetectionOutcome(IReadOnlyDictionary<string, string> Values
 /// the string's width (WR-015).
 /// </summary>
 /// <remarks>
-/// With <c>Presidio:DefaultDetection</c> off (the shipped default), a file that defines no custom recognizer is not sent to
-/// Presidio at all, so its messages are published as received; spaCy runs only for a custom recognizer with context words,
-/// and then without its named-entity component (see <c>python/presidio_demo.py</c>).
+/// A file's lone-name recognizers run here, after Presidio returned every span of the message, so a lone string equal to a
+/// name part found elsewhere in the message is protected too. With <c>Presidio:DefaultDetection</c> off (the shipped
+/// default), a file that defines no custom recognizer is not sent to Presidio at all, so its messages are published as
+/// received; spaCy runs only for a custom recognizer with context words, and then without its named-entity component (see
+/// <c>python/presidio_demo.py</c>).
 /// </remarks>
 /// <param name="files">The validated recognizer files by feed.</param>
 /// <param name="defaultDetection">Whether Presidio's predefined recognizers run beside the defined ones
@@ -215,6 +217,8 @@ public sealed class DetectingFeedProtector(IReadOnlyDictionary<FeedType, Recogni
         var spans = defaultDetection || file.Recognizers.Count > 0
             ? await AnalyzeAsync(feed, pending.Select(slot => candidates[slot].Value).ToArray(), cancellationToken)
             : pending.Select(_ => Array.Empty<Span>()).ToArray();
+        // Lone names need every span of the message, so they are added once Presidio has answered for all its strings.
+        spans = AddLoneNames(file, pending.Select(slot => candidates[slot].Value).ToArray(), spans);
         for (int i = 0; i < pending.Count; i++)
         {
             int slot = pending[i];
@@ -320,6 +324,45 @@ public sealed class DetectingFeedProtector(IReadOnlyDictionary<FeedType, Recogni
     }
 
     /// <summary>
+    /// Adds the spans of the file's lone-name recognizers (<c>type="lone_name"</c>) to one message's spans. A string that,
+    /// trimmed, equals a name part of a source match at or above the threshold anywhere in the message gets one span over its
+    /// trimmed text, scored as the highest such source match. Example: with <c>MILLER/JORDAN</c> found, a lone
+    /// <c>JORDAN</c> is detected; <c>SILVER</c> is not.
+    /// </summary>
+    private static IReadOnlyList<Span[]> AddLoneNames(RecognizerFile file, IReadOnlyList<string> texts, IReadOnlyList<Span[]> spans)
+    {
+        if (file.LoneNames is not { Count: > 0 } loneNames)
+        {
+            return spans;
+        }
+        var result = spans.Select(found => found.ToList()).ToArray();
+        foreach (var lone in loneNames)
+        {
+            var parts = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < texts.Count; i++)
+            {
+                foreach (var span in spans[i].Where(s => s.Recognizer == lone.Source && s.Score >= file.Threshold))
+                {
+                    foreach (string part in LoneNameRecognizer.Parts(texts[i][span.Start..span.End]))
+                    {
+                        parts[part] = Math.Max(parts.GetValueOrDefault(part), span.Score);
+                    }
+                }
+            }
+            for (int i = 0; i < texts.Count && parts.Count > 0; i++)
+            {
+                string trimmed = texts[i].Trim();
+                if (trimmed.Length > 0 && parts.TryGetValue(trimmed, out double score))
+                {
+                    int start = texts[i].IndexOf(trimmed, StringComparison.Ordinal);
+                    result[i].Add(new Span(start, start + trimmed.Length, lone.Entity, score, lone.Name));
+                }
+            }
+        }
+        return result.Select(found => found.ToArray()).ToArray();
+    }
+
+    /// <summary>
     /// Sends one message's decoded strings to the embedded Presidio engine in one batch.
     /// </summary>
     private static async ValueTask<IReadOnlyList<Span[]>> AnalyzeAsync(FeedType feed, IReadOnlyList<string> texts, CancellationToken cancellationToken)
@@ -388,7 +431,7 @@ public sealed class DetectingFeedProtector(IReadOnlyDictionary<FeedType, Recogni
     /// <param name="End">The character after the last.</param>
     /// <param name="Entity">The entity type.</param>
     /// <param name="Score">The detection score.</param>
-    /// <param name="Recognizer">The recognizer name: a custom recognizer's name or a Presidio predefined recognizer.</param>
+    /// <param name="Recognizer">The recognizer name: a custom or lone-name recognizer's name, or a Presidio predefined recognizer.</param>
     private sealed record Span(int Start, int End, string Entity, double Score, string Recognizer);
 
     #endregion

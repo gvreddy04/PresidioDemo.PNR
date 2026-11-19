@@ -171,7 +171,8 @@ internal static class DetectingProtectorChecks
             && pnrOutcome.Events.Any(e => e.Decision == DetectionDecision.NothingDetected), "PNR.txt has changed, allowed and undetected strings");
         Check(pnrOutcome.Events.Where(e => e.Decision is DetectionDecision.Allowed or DetectionDecision.NothingDetected or DetectionDecision.BelowThreshold)
             .All(e => pnrOutcome.Values[Parse(pnrSample).Fields[e.Slot].Id] == Parse(pnrSample).Fields[e.Slot].Value), "allowed and undetected strings are published unchanged");
-        var defined = files[FeedType.PNR].Recognizers.Select(r => r.Name).Concat(["allow_list", "none"]).ToHashSet(StringComparer.Ordinal);
+        var defined = files[FeedType.PNR].Recognizers.Select(r => r.Name).Concat((files[FeedType.PNR].LoneNames ?? []).Select(r => r.Name))
+            .Concat(["allow_list", "none"]).ToHashSet(StringComparer.Ordinal);
         Check(pnrOutcome.Events.All(e => e.Recognizer.Split('+').All(defined.Contains) && !e.Reasons.HasFlag(ReviewReason.SpacyGuess)),
             "with default detection off every decision names a defined recognizer, and nothing is a spacy-guess");
         // AC-011: no PNR anchor; a message whose creation time is gone still publishes.
@@ -181,15 +182,49 @@ internal static class DetectingProtectorChecks
         Check(stillPublished.Events.Count == noCreationTime.Fields.Count, "a message without a creation time is protected, not dead-lettered");
 
         // Made-up strings through the shipped file (AC-004, AC-005, AC-013), default detection off.
-        var shipped = await ProtectStringsAsync(protector, "MILLER/JORDAN MR", "Please book a window seat", "1405", "09NOV26 MILLER/JORDAN",
-            "Contact Alex Sample", "DOCSDAHK1/////12MAR85/F//MILLER/JORDAN");
+        var shipped = await ProtectStringsAsync(protector, "MILLER/JORDAN MR", "Please book a window seat", "1405", "RBY09NOV*APPR CC VI 1234 OK",
+            "Contact Alex Sample", "DOCSDAHK1/P/USA/X1234567/USA/12MAR85/F/09NOV31/MILLER/JORDAN");
         Check(shipped[0] == "****************", "a declared recognizer masks MILLER/JORDAN MR");
         Check(shipped[1] == "Please book a window seat", "a string in which nothing is detected is published unchanged");
         Check(shipped[2] == "1405", "a whole-string allow-list item keeps 1405");
-        Check(shipped[3] == "09NOV26 *************", "an allow-list item never releases a detected name inside a longer string");
+        Check(shipped[3] == "RBY09NOV*APPR CC VI **** OK", "an allow-list item never releases a detected piece inside a longer string");
         Check(shipped[4] == "Contact Alex Sample", "no spaCy PERSON guess runs with default detection off");
-        Check(shipped[5] == "DOCSDAHK1/////12MAR85/F//*************", "names-only: a DOCS name is masked, its other fields are published as received");
+        Check(!shipped[5].Contains("12MAR85", StringComparison.Ordinal) && !shipped[5].Contains("09NOV31", StringComparison.Ordinal)
+            && shipped[5].StartsWith("DOCSDAHK1/P/", StringComparison.Ordinal) && shipped[5].EndsWith("/*************", StringComparison.Ordinal),
+            "a DOCS birth date, expiry and name are masked although the dates look like allowed dates");
         Console.WriteLine("PASS the shipped file acts per string: declared recognizers, allow list, unchanged when nothing is detected");
+
+        // The fields of the PNR field list on made-up strings: IP address, phone remark, agency number, OSI nationality and
+        // change identifiers.
+        var fields = await ProtectStringsAsync(protector, "CLIENT IP 10.20.30.40", "5555550142*C 1.2", "55*B 1.2", "QQQ1X/DA9Z/12345678/DFW/1X/T/US/USD/AS",
+            "PAX1.2 CA NATIONAL // CA RESIDENT", "1A2B3C", "131500", "123456", "K7QX2M");
+        Check(fields[0] == "CLIENT IP ***********", "an IPv4 address is masked with default detection off");
+        Check(fields[1] == "***********C 1.2" && fields[2] == "***B 1.2", "a phone remark masks the digits and keeps the passenger marker");
+        Check(fields[3] == "QQQ1X/DA9Z/********/DFW/1X/T/US/USD/AS", "the agency number of a received-from line is masked, and nothing else");
+        Check(fields[4] == "PAX1.2 ## NATIONAL // ###########", "the nationality and residence in OSI text are masked");
+        Check(fields[5] == "******" && fields[6] == "131500" && fields[7] == "123456" && fields[8] == "K7QX2M",
+            "a change identifier needs a digit and a letter A-F: a time, zeros and a record locator stay unchanged");
+        Console.WriteLine("PASS the IP, phone remark, agency number, OSI nationality and change identifier recognizers mask their fields");
+
+        // passengerName no longer masks codes shaped like SURNAME/GIVEN (made-up stand-ins for shapes seen in the samples).
+        var codes = await ProtectOutcomeAsync(protector, "QQQ1X/DA9Z/12345678/DFW/1X/T/US/USD/AS", "T/FQR/MPDA123456/12000/0/01612345678/0002//",
+            "XXCOM-US/DA123456-REF/", "RMMPDANN1DFWORD1234X09NOV.YQX/S25K-W-Y", "ABC OP/MILEAGE QUOTED 12000", "DOCSDA///JORDAN");
+        Check(codes.Events.All(e => !e.Recognizer.Split('+').Contains("passengerName") || e.Slot == 5), "no code shaped like SURNAME/GIVEN is read as a name");
+        Check(codes.Values["1"].StartsWith("T/FQR/MP", StringComparison.Ordinal) && codes.Values["2"].StartsWith("XXCOM-US/", StringComparison.Ordinal)
+            && codes.Values["3"] == "RMMPDANN1DFWORD1234X09NOV.YQX/S25K-W-Y" && codes.Values["4"] == "ABC OP/MILEAGE QUOTED 12000",
+            "their code letters stay readable");
+        Check(codes.Values["5"] == "DOCSDA///******", "in a DOCS record with empty fields the name is masked, not the record code");
+        Console.WriteLine("PASS passengerName masks whole names, passenger references and DOCS names only");
+
+        // Lone names (type="lone_name"): a lone string equal to a name part found in the same message is masked whole.
+        var lone = await ProtectOutcomeAsync(protector, "MILLER", "JORDAN", "DOCSDAHK1/////12MAR85/F//MILLER/JORDAN", "SILVER", "DENVER", " jordan ", "MR");
+        Check(lone.Values["0"] == "******" && lone.Values["1"] == "******" && lone.Values["5"] == " ****** "
+            && lone.Events[0].Recognizer == "loneNamePart" && lone.Events[0].Entity == "PERSON",
+            "a lone name part of a passengerName match in the same message is masked, also with other case and spaces");
+        Check(lone.Values["3"] == "SILVER" && lone.Values["4"] == "DENVER" && lone.Values["6"] == "MR", "other lone words and titles stay unchanged");
+        var alone = await ProtectStringsAsync(protector, "MILLER", "JORDAN");
+        Check(alone.SequenceEqual(["MILLER", "JORDAN"]), "without a passengerName match in the message, a lone word is not a name");
+        Console.WriteLine("PASS a lone name part is masked only when passengerName finds the name in the same message");
 
         // AC-003, AC-006, AC-008: test-only files reconfigure the PNR registry, so the shipped one is restored afterwards.
         string Temporary(string content)
@@ -213,18 +248,18 @@ internal static class DetectingProtectorChecks
         try
         {
             // Presidio:DefaultDetection with and without defined recognizers (made-up strings).
-            string[] madeUp = ["CTCEDAHK1 alex@example.com 1MILLER/JORDAN", "Contact Alex Sample", "Card 4111 1111 1111 1111", "Please book a window seat"];
+            string[] madeUp = ["CTCEDAHK1 alex@example.com -1MILLER/JORDAN", "Contact Alex Sample", "Card 4111 1111 1111 1111", "Please book a window seat"];
             var definedOnly = await ProtectStringsAsync(protector, madeUp);
-            Check(definedOnly[0] == "CTCEDAHK1 alex@example.com 1*************" && definedOnly[1] == madeUp[1] && definedOnly[2] == madeUp[2],
+            Check(definedOnly[0] == "CTCEDAHK1 alex@example.com -1*************" && definedOnly[1] == madeUp[1] && definedOnly[2] == madeUp[2],
                 "default detection off with recognizers: only the defined ones act; the made-up email stays and the SURNAME/GIVEN name is masked");
             var both = await ProtectOutcomeAsync(Configured(shippedFile, defaultDetection: true), madeUp);
-            Check(both.Values["0"] == "CTCEDAHK1 ################ 1*************" && both.Values["1"] == "Contact ***********"
+            Check(both.Values["0"] == "CTCEDAHK1 **************** -1*************" && both.Values["1"] == "Contact ***********"
                 && both.Values["2"] == "Card " + new string('#', 19) && both.Values["3"] == madeUp[3],
-                $"default detection on with recognizers: both act; the email gets DEFAULT and Presidio's PERSON the PERSON anonymizer (got {string.Join(" | ", both.Values.Values)})");
+                $"default detection on with recognizers: both act; the email gets its own anonymizer, else DEFAULT, and Presidio's PERSON the PERSON anonymizer (got {string.Join(" | ", both.Values.Values)})");
             Check(both.Events[0].Recognizer.Split('+').Contains("passengerName") && both.Events[0].Recognizer.Split('+').Contains("EmailRecognizer")
                 && both.Events[1].Reasons.HasFlag(ReviewReason.SpacyGuess), "default detection on: the log names both kinds of recognizer, and a spaCy guess is for review");
             var presidioOnly = await ProtectStringsAsync(Configured(empty, defaultDetection: true), madeUp);
-            Check(presidioOnly[0] == "CTCEDAHK1 <EMAIL_ADDRESS>  1MILLER/JORDAN" && presidioOnly[1] == "Contact <PERSON>   " && presidioOnly[3] == madeUp[3],
+            Check(presidioOnly[0].StartsWith("CTCEDAHK1 <EMAIL_ADDRESS>  -1MILLER/", StringComparison.Ordinal) && presidioOnly[1] == "Contact <PERSON>   " && presidioOnly[3] == madeUp[3],
                 $"default detection on without recognizers: only Presidio acts (got {string.Join(" | ", presidioOnly)})");
             var nothingInput = Parse(pnrSample);
             var nothing = await Configured(empty).ProtectAsync(FeedType.PNR, nothingInput, CancellationToken.None);
@@ -381,15 +416,16 @@ internal static class DetectingProtectorChecks
             "PNR raw word published unchanged");
         Console.WriteLine("PASS a PNR message with a changed raw word is published with the word unchanged");
 
-        // WR-019: narrowing the name recognizer breaks the names-only parity with the frozen baseline before merge. This
-        // reconfigures the PNR registry, so it runs last and restores the shipped configuration afterwards.
-        string narrowed = Temporary(File.ReadAllText(Path.Combine(recognizers, "pnr.xml"))
-            .Replace("(?&lt;![A-Z])[A-Z]{2,}(?:[ '-][A-Z]+)*/[A-Z]*(?:[ '-][A-Z]+)*", "(?&lt;![A-Z])[A-Z]{30,}/[A-Z]{30,}", StringComparison.Ordinal));
+        // WR-019: narrowing the name recognizer breaks parity with the frozen baseline before merge. This reconfigures the
+        // PNR registry, so it runs last and restores the shipped configuration afterwards.
+        string narrowed = Temporary(System.Text.RegularExpressions.Regex.Replace(File.ReadAllText(Path.Combine(recognizers, "pnr.xml")),
+            "(<recognizer name=\"passengerName\"[^>]*>).*?(</recognizer>)", "$1<pattern name=\"narrow\" score=\"0.9\">[A-Z]{30,}/[A-Z]{30,}</pattern>$2",
+            System.Text.RegularExpressions.RegexOptions.Singleline));
         try
         {
-            int reviewedMisses = await ParityMissesAsync(protector, projectRoot, FeedType.PNR);
+            int reviewedMisses = await ParityMissesAsync(protector, projectRoot, FeedType.PNR, files[FeedType.PNR].DefinedEntities);
             Check(reviewedMisses == 0, "the shipped recognizers must have no unapproved PNR parity miss");
-            int narrowedMisses = await ParityMissesAsync(Configured(narrowed), projectRoot, FeedType.PNR);
+            int narrowedMisses = await ParityMissesAsync(Configured(narrowed), projectRoot, FeedType.PNR, files[FeedType.PNR].DefinedEntities);
             Check(narrowedMisses > 0, "a narrowed name recognizer must fail parity");
             Console.WriteLine($"PASS a narrowed PNR name recognizer fails parity with the frozen baseline ({narrowedMisses} unapproved misses)");
         }
@@ -417,15 +453,16 @@ internal static class DetectingProtectorChecks
             new FeedField(i.ToString(System.Globalization.CultureInfo.InvariantCulture), "slot" + i, value)).ToArray(), new object()), CancellationToken.None);
 
     /// <summary>
-    /// Counts baseline names (PERSON values) of one binary feed that the protector publishes unchanged and that are not
-    /// approved exceptions (WR-019). Names-only: every other baseline value is out of scope. Value-free: compares bytes at
-    /// the frozen locations only.
+    /// Counts baseline values in scope of one binary feed that the protector publishes unchanged and that are not approved
+    /// exceptions (WR-019). In scope are the values whose entity a recognizer the shipped file defines produces; every other
+    /// baseline value is out of scope. Value-free: compares bytes at the frozen locations only.
     /// </summary>
     /// <param name="protector">The protector to measure.</param>
     /// <param name="projectRoot">The repository root.</param>
     /// <param name="feed">A binary feed.</param>
+    /// <param name="scope">The entities in scope: those the shipped file's recognizers produce.</param>
     /// <returns>The number of unapproved misses.</returns>
-    private static async Task<int> ParityMissesAsync(DetectingFeedProtector protector, string projectRoot, FeedType feed)
+    private static async Task<int> ParityMissesAsync(DetectingFeedProtector protector, string projectRoot, FeedType feed, IReadOnlySet<string> scope)
     {
         using var baseline = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(projectRoot, "tests", "fixtures", "parity-baseline.json")));
         using var approved = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(projectRoot, "tests", "fixtures", "parity-exceptions.json")));
@@ -433,7 +470,7 @@ internal static class DetectingProtectorChecks
         string folder = FeedCatalog.Get(feed).FolderName;
         int misses = 0;
         foreach (var group in baseline.RootElement.GetProperty("protected").EnumerateArray()
-            .Where(e => e.GetProperty("feed").GetString() == folder && e.GetProperty("entity").GetString() == "PERSON")
+            .Where(e => e.GetProperty("feed").GetString() == folder && scope.Contains(e.GetProperty("entity").GetString()!))
             .GroupBy(e => e.GetProperty("sample").GetString()!))
         {
             string path = Path.Combine(projectRoot, "docs", "sample-docs", folder, group.Key);

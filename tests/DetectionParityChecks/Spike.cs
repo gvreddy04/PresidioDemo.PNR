@@ -36,9 +36,9 @@ public sealed record SpikeFinding(string Sample, string Feed, string Location, i
 
 /// <summary>
 /// The decoded-text spike (V-01, V-02, V-11): parity against the value-free baseline (WR-019), rebuilds, negative samples
-/// and throughput, with the shipped <c>Presidio:DefaultDetection</c> off. Parity is names-only: only the baseline values
-/// whose entity is PERSON are checked, every other value is counted as out of scope and never fails the run. Extra masking
-/// outside the baseline never fails it either.
+/// and throughput, with the shipped <c>Presidio:DefaultDetection</c> off. Only the baseline values whose entity a recognizer
+/// defined in the feed's file produces are checked (<see cref="ParityBaseline.InScope"/>); every other value is counted as
+/// out of scope and never fails the run. Extra masking outside the baseline never fails it either.
 /// </summary>
 public static class Spike
 {
@@ -51,7 +51,7 @@ public static class Spike
     /// <param name="root">The repository root.</param>
     /// <param name="output">The run folder under <c>.test-runs</c>.</param>
     /// <param name="rounds">How many rounds over the production samples the throughput run makes.</param>
-    /// <returns>True when every PERSON baseline value is protected or an approved exception, every approved exception is
+    /// <returns>True when every baseline value in scope is protected or an approved exception, every approved exception is
     /// still needed, and every sample rebuilds (WR-019).</returns>
     public static async Task<bool> RunAsync(string root, string output, int rounds)
     {
@@ -61,6 +61,7 @@ public static class Spike
             ? JsonSerializer.Deserialize<List<ParityException>>(File.ReadAllText(exceptionsFile), ParityBaseline.JsonOptions) ?? []
             : [];
         var protector = DetectionRun.CreateProtector(root);
+        var files = ParityBaseline.Recognizers(root);
 
         var results = new List<SampleResult>();
         foreach (string path in SampleFiles.All(root))
@@ -75,9 +76,9 @@ public static class Spike
         int outOfScope = 0;
         foreach (var entry in baseline.Protected)
         {
-            if (!ParityBaseline.InScope(entry))
+            if (!ParityBaseline.InScope(entry, files))
             {
-                // Names-only: the recognizer files keep passenger names only, so other values are reported, never failed.
+                // No recognizer the file defines produces this entity, so the value is reported, never failed.
                 outOfScope++;
                 continue;
             }
@@ -100,10 +101,10 @@ public static class Spike
         int rebuilt = production.Count(r => r.Output is not null);
 
         // spaCy runs with default detection off only for a custom recognizer with context words (see presidio_demo.py).
-        bool contextWords = RecognizerFileReader.ReadAll(Path.Combine(root, "src", "PresidioDemo.Core", "Configuration", "recognizers")).Values
-            .Any(file => file.Recognizers.Any(r => r.Context.Count > 0));
+        bool contextWords = files.Values.Any(file => file.Recognizers.Any(r => r.Context.Count > 0));
         var throughput = await Throughput(protector, production.Select(r => r.Path).ToArray(), rounds, contextWords);
-        // WR-019: a baseline name published unchanged fails until it is protected or approved; extra masking never fails.
+        // WR-019: a baseline value in scope published unchanged fails until it is protected or approved; extra masking
+        // never fails.
         bool parity = unapproved.Length == 0 && stale.Length == 0 && rebuilt == production.Length;
         var negatives = results.Where(r => Path.GetFileName(r.Path).Contains("Negative_Testing", StringComparison.Ordinal))
             .Select(r => new { Sample = Path.GetFileName(r.Path), Status = r.Output is null ? "rejected" : "published", Reason = r.Reason ?? "" }).ToArray();
@@ -111,12 +112,13 @@ public static class Spike
         var summary = new
         {
             Parity = parity ? "PASS" : "FAIL",
-            Scope = "names-only: only baseline values whose entity is " + ParityBaseline.NameEntity + " are checked",
+            Scope = "baseline values whose entity a recognizer defined in the feed's file produces: "
+                + string.Join(", ", files.Values.SelectMany(file => file.DefinedEntities).Distinct().Order(StringComparer.Ordinal)),
             DefaultDetection = protector.DefaultDetection,
             Protected = new
             {
                 Baseline = baseline.Protected.Count,
-                NamesInScope = caught.Count + misses.Count,
+                InScope = caught.Count + misses.Count,
                 OutOfScope = outOfScope,
                 Caught = caught.Count,
                 Missed = misses.Count,
@@ -138,8 +140,8 @@ public static class Spike
             Misses = missValues
         }, ParityBaseline.JsonOptions) + Environment.NewLine);
         Console.WriteLine($"SPIKE parity={summary.Parity} | default detection {(protector.DefaultDetection ? "on" : "off")} | " +
-            $"{caught.Count + misses.Count} names in scope: {caught.Count} caught, {misses.Count} missed ({unapproved.Length} unapproved, {stale.Length} stale exceptions) | " +
-            $"{outOfScope} other baseline values out of scope (names-only) | rebuilds {rebuilt}/{production.Length}");
+            $"{caught.Count + misses.Count} values in scope: {caught.Count} caught, {misses.Count} missed ({misses.Count - unapproved.Length} approved, " +
+            $"{unapproved.Length} unapproved, {stale.Length} stale exceptions) | {outOfScope} values out of scope | rebuilds {rebuilt}/{production.Length}");
         Console.WriteLine("SPIKE throughput " + JsonSerializer.Serialize(throughput));
         Console.WriteLine("SPIKE summary " + Path.Combine(output, "summary.json"));
         return parity;
@@ -189,8 +191,8 @@ public static class Spike
 
     /// <summary>
     /// Measures messages per second for one process (one ECS task) in the protector's detection mode, and the task count
-    /// that sustains the PNR feed's sizing peak of 400 messages per second (its share of the 2,000 messages per second
-    /// sized for the airline feeds before this branch kept PNR only).
+    /// that sustains the feed's sizing peak of 400 messages per second (its share of the 2,000 messages per second sized
+    /// for the airline feeds before each feed got its own worker).
     /// </summary>
     private static async Task<object> Throughput(DetectingFeedProtector protector, IReadOnlyList<string> samples, int rounds, bool contextWords)
     {
@@ -231,7 +233,7 @@ public static class Spike
             MessagesPerSecondPerTask = Math.Round(messages / total.Elapsed.TotalSeconds, 1),
             Feeds = rows,
             TasksForPeak = rows.Sum(r => r.Tasks),
-            Assumption = "400 msg/s peak for the PNR feed; one worker process per ECS task"
+            Assumption = $"400 msg/s peak for the {string.Join(", ", FeedCatalog.All.Select(f => f.FolderName))} feed; one worker process per ECS task"
         };
     }
 

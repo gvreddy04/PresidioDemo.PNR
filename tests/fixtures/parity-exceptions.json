@@ -1,22 +1,237 @@
 [
   {
     "sample": "PNR.txt",
-    "location": "404",
-    "reason": "standalone name with nothing detected; published unchanged (WR-014, accepted in 26111701 W-018)"
+    "location": "596",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
   },
   {
     "sample": "PNR.txt",
-    "location": "444",
-    "reason": "standalone name with nothing detected; published unchanged (WR-014, accepted in 26111701 W-018)"
+    "location": "700",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "800",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "1056",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "1144",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "1232",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "1320",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "1392",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "1492",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "1576",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "2056",
+    "reason": "binary string shorter than 4 characters (raw words, WR-015)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "2064",
+    "reason": "phone number in a string of its own, without the passenger marker the phoneRemark recognizer needs; no recognizer covers a bare run of digits"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "2108",
+    "reason": "binary string shorter than 4 characters (raw words, WR-015)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "2117",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "2184",
+    "reason": "binary string shorter than 4 characters (raw words, WR-015)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "2193",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "2280",
+    "reason": "binary string shorter than 4 characters (raw words, WR-015)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "2289",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "2348",
+    "reason": "binary string shorter than 4 characters (raw words, WR-015)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "2357",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "2960",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "3016",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "3068",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "3744",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "4244",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "4472",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "4548",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "4628",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "4704",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "4784",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "5004",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR.txt",
+    "location": "5420",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
   },
   {
     "sample": "PNR_02.txt",
-    "location": "400",
-    "reason": "standalone name with nothing detected; published unchanged (WR-014, accepted in 26111701 W-018)"
+    "location": "288",
+    "reason": "change identifier without a letter A-F: the changeIdentifier rule needs one so that a six-digit creation time stays unchanged"
   },
   {
     "sample": "PNR_02.txt",
-    "location": "440",
-    "reason": "standalone name with nothing detected; published unchanged (WR-014, accepted in 26111701 W-018)"
+    "location": "612",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR_02.txt",
+    "location": "684",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR_02.txt",
+    "location": "792",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR_02.txt",
+    "location": "896",
+    "reason": "binary string shorter than 4 characters (raw words, WR-015)"
+  },
+  {
+    "sample": "PNR_02.txt",
+    "location": "904",
+    "reason": "phone remark: the digits are masked and the passenger marker after them is kept, as decided for phoneRemark"
+  },
+  {
+    "sample": "PNR_02.txt",
+    "location": "956",
+    "reason": "binary string shorter than 4 characters (raw words, WR-015)"
+  },
+  {
+    "sample": "PNR_02.txt",
+    "location": "964",
+    "reason": "phone remark: the digits are masked and the passenger marker after them is kept, as decided for phoneRemark"
+  },
+  {
+    "sample": "PNR_02.txt",
+    "location": "1216",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR_02.txt",
+    "location": "1296",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR_02.txt",
+    "location": "1384",
+    "reason": "received-from code outside the hexadecimal shape of the changeIdentifier rule; no recognizer covers it"
+  },
+  {
+    "sample": "PNR_02.txt",
+    "location": "1396",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR_02.txt",
+    "location": "1468",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR_02.txt",
+    "location": "1612",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
+  },
+  {
+    "sample": "PNR_02.txt",
+    "location": "1708",
+    "reason": "free-text remark (factText/Text, remarkText/Text and the like): there is no catch-all, so it is published unchanged apart from what the recognizers find in it (decision A)"
   }
 ]

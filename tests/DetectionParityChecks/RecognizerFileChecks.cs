@@ -79,6 +79,31 @@ public static class RecognizerFileChecks
                 && file.ToBridgeJson(true).Contains("\"defaultDetection\":true", StringComparison.Ordinal),
                 "the bridge JSON carries Presidio:DefaultDetection", ref passed);
 
+            // Lone-name recognizers (type="lone_name"), declared before or after their source.
+            const string LoneName = "<recognizer name=\"lonePart\" type=\"lone_name\" source=\"passengerName\" supported_entity=\"PERSON\" />";
+            string WithLone(string element) => Valid.Replace("</recognizers>", element + "</recognizers>");
+            var withLone = Load(scratch, WithLone(LoneName));
+            Check(withLone.LoneNames is [{ Name: "lonePart", Entity: "PERSON", Source: "passengerName" }] && withLone.Recognizers.Count == 2
+                && !withLone.ToBridgeJson(false).Contains("lonePart", StringComparison.Ordinal),
+                "a lone_name recognizer loads with its source and entity, and is not sent to Presidio", ref passed);
+            Check(withLone.DefinedEntities.SetEquals(["PERSON", "TITLE"]) && file.DefinedEntities.SetEquals(["PERSON", "TITLE"])
+                && Load(scratch, WithLone(LoneName.Replace("\"PERSON\"", "\"PASSENGER\""))).DefinedEntities.Contains("PASSENGER"),
+                "the defined entities are those of the custom and lone-name recognizers", ref passed);
+            Check(Load(scratch, Valid.Replace("<recognizer name=\"passengerName\"", LoneName + "<recognizer name=\"passengerName\"")).LoneNames?.Count == 1
+                && Load(scratch, WithLone(LoneName.Replace(" />", " enabled=\"false\" />"))).LoneNames?.Count == 0,
+                "a lone_name recognizer may come before its source, and enabled=\"false\" leaves it out", ref passed);
+            Check(LoneNameRecognizer.Parts("MILLER-SMITH/ANN MR").SequenceEqual(["MILLER", "SMITH", "ANN"])
+                && LoneNameRecognizer.Parts("O'NEIL/J DR").SequenceEqual(["NEIL"]) && !LoneNameRecognizer.Parts("MISS/MSTR").Any(),
+                "name parts split on / space - and ', keep two or more letters and drop titles", ref passed);
+            Reject(scratch, WithLone(LoneName.Replace("source=\"passengerName\"", "source=\"noSuchRecognizer\"")), "a lone_name with an unknown source", ref passed, "not a custom recognizer");
+            Reject(scratch, WithLone(LoneName.Replace("source=\"passengerName\"", "source=\"unused\"")), "a lone_name whose source is switched off", ref passed, "enabled");
+            Reject(scratch, WithLone(LoneName.Replace("source=\"passengerName\"", "source=\"CryptoRecognizer\"")), "a lone_name whose source is predefined", ref passed, "not a custom recognizer");
+            Reject(scratch, WithLone(LoneName.Replace("source=\"passengerName\"", "source=\"lonePart\"")), "a lone_name that is its own source", ref passed, "own source");
+            Reject(scratch, WithLone(LoneName.Replace(" source=\"passengerName\"", "")), "a lone_name without a source", ref passed, "needs a source");
+            Reject(scratch, WithLone(LoneName.Replace("\"PERSON\"", "\"person\"")), "a lone_name with a lower-case entity", ref passed);
+            Reject(scratch, WithLone(LoneName.Replace(" />", " score=\"0.9\" />")), "a lone_name with an unknown attribute", ref passed, "unknown attribute");
+            Reject(scratch, WithLone(LoneName.Replace(" />", "><pattern name=\"x\">X</pattern></recognizer>")), "a lone_name with a child element", ref passed, "no child elements");
+
             Reject(scratch, "<recognizers feed=\"PNR\"", "not well-formed XML", ref passed);
             Reject(scratch, "<?xml version=\"1.0\"?><!DOCTYPE r [<!ENTITY x \"y\">]><recognizers feed=\"PNR\" />", "a DTD", ref passed);
             Reject(scratch, Valid.Replace("feed=\"PNR\"", "feed=\"OTHER\""), "the wrong feed attribute", ref passed);

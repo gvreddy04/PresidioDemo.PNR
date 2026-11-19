@@ -39,6 +39,8 @@ class DecodedTextFeedTests(unittest.TestCase):
         # A template change: the producer appends a new 4+ character string after the last PNR field.
         cls.added_text = "NEWFIELD9"
         inputs["PNR/template-added-field.bin"] = payload(pnr) + counted(cls.added_text)
+        # Lone names: made-up strings appended to the message, a SURNAME/GIVEN name and two lone words.
+        inputs["PNR/template-lone-names.bin"] = payload(pnr) + counted("MILLER/JORDAN") + counted("JORDAN") + counted("SILVER")
         # Template changes (AC-007): PNR string 20 removed, and strings 1 and 2 swapped (the creation time, string 4, and
         # the PNR after it stay in place).
         pnr_payload = payload(pnr)
@@ -63,7 +65,7 @@ class DecodedTextFeedTests(unittest.TestCase):
             self.assertIn(reason, rejected[name])
 
     def test_published_samples_keep_framing_and_protect_every_baseline_name(self):
-        # Names-only: every PERSON baseline value is protected or approved; every other value is out of scope.
+        # Every baseline value in scope is protected or approved; the rest is out of scope.
         document, exceptions = baseline()
         totals = {"protected": 0, "approved_exceptions": 0, "out_of_scope": 0}
         for key, original in self.inputs.items():
@@ -82,12 +84,17 @@ class DecodedTextFeedTests(unittest.TestCase):
         pnr = payload(self.harness.published("PNR", "template-added-field.bin"))
         self.assertTrue(pnr.endswith(counted(self.added_text)), "the added, undetected PNR string is published unchanged")
 
+    def test_a_lone_name_part_of_a_name_in_the_same_message_is_masked(self):
+        # The lone-name recognizer runs in .NET after Presidio: JORDAN is a part of MILLER/JORDAN, SILVER is not.
+        published = payload(self.harness.published("PNR", "template-lone-names.bin"))
+        self.assertTrue(published.endswith(counted("*" * 13) + counted("*" * 6) + counted("SILVER")))
+
     def test_removed_and_reordered_template_fields_still_publish_protected(self):
         document, exceptions = baseline()
         pnr = payload((SAMPLES / "PNR" / "PNR.txt").read_bytes())
         published = payload(self.harness.published("PNR", "PNR.txt"))
-        # Names the unchanged sample protects must stay protected; short values, listed exceptions and values out of the
-        # names-only scope are not checked.
+        # Values in scope the unchanged sample protects must stay protected; short values, listed exceptions and values out of
+        # scope are not checked.
         values = [pnr[int(e["location"]):int(e["location"]) + e["length"]] for e in document["protected"]
                   if in_scope(e) and e["sample"] == "PNR.txt" and e["length"] >= 4 and ("PNR.txt", e["location"]) not in exceptions]
         values = [v for v in values if v not in published]

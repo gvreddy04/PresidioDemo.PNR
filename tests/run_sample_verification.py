@@ -1,9 +1,9 @@
 """Run all supplied samples through the real feed workers and retain value-free verification evidence.
 
-Every published sample must keep its MQ metadata and framing, and protect every PERSON value of the frozen parity
-baseline (tests/fixtures/parity-baseline.json) unless it is an approved exception (parity-exceptions.json). The check is
-names-only: every other baseline value is counted as out of scope and never fails the run. The harness runs with the
-shipped Presidio:DefaultDetection off. A negative sample listed in EXPECTED_REJECTIONS must be rejected with its reason.
+Every published sample must keep its MQ metadata and framing, and protect every value of the frozen parity baseline
+(tests/fixtures/parity-baseline.json) whose entity a recognizer defined in the feed's file produces, unless it is an
+approved exception (parity-exceptions.json). Every other baseline value is counted as out of scope and never fails the
+run. The harness runs with the shipped Presidio:DefaultDetection off. A negative sample listed in EXPECTED_REJECTIONS must be rejected with its reason.
 Exit 0 when every check passes, 1 otherwise.
 """
 from collections import Counter
@@ -63,15 +63,15 @@ for item in batch["Items"]:
     results.append(result)
 
 statuses = Counter(item["Status"] for item in batch["Items"])
-names = sum(1 for entry in document["protected"] if in_scope(entry))
-# The harness exits 2 when a message is rejected, 0 when every message is published. Every name in scope is protected or
+scoped = sum(1 for entry in document["protected"] if in_scope(entry))
+# The harness exits 2 when a message is rejected, 0 when every message is published. Every value in scope is protected or
 # an approved exception, and every approved exception is still needed.
 passed = (completed.returncode == (2 if EXPECTED_REJECTIONS else 0) and all(r["verification"] == "Passed" for r in results)
-          and totals["protected"] + totals["approved_exceptions"] == names
+          and totals["protected"] + totals["approved_exceptions"] == scoped
           and totals["approved_exceptions"] == len(exceptions))
 summary = dict(started_at=started.isoformat(), command=command, application_exit_code=completed.returncode,
-               total_samples=len(results), statuses=dict(statuses), scope="names-only (PERSON)",
-               baseline_protected=len(document["protected"]), names_in_scope=names, out_of_scope=len(document["protected"]) - names,
+               total_samples=len(results), statuses=dict(statuses), scope="entities of the recognizers each feed's file defines",
+               baseline_protected=len(document["protected"]), in_scope=scoped, out_of_scope=len(document["protected"]) - scoped,
                protected=totals["protected"], approved_exceptions=totals["approved_exceptions"],
                all_checks_passed=passed, samples=results)
 evidence = run / "verification.json"

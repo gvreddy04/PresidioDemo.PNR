@@ -84,18 +84,58 @@ class DetectionBridgeTests(unittest.TestCase):
         self.assertTrue(self.custom_names)
         self.assertTrue(all(json.loads(line)["defaultDetection"] is False for line in self.lines))
 
-    def test_docs_record_returns_only_the_passenger_names(self):
+    def test_docs_record_returns_name_date_of_birth_and_gender_spans(self):
         found = spans("PNR", "DOCSDAHK1/////12MAR85/F//MILLER/JORDAN-1MILLER/JORDAN")[0]
-        self.assertEqual([(e, t) for e, t, n in found], [("PERSON", "MILLER/JORDAN"), ("PERSON", "MILLER/JORDAN")])
+        self.assertIn(("DATE_OF_BIRTH", "12MAR85", "dateOfBirth"), found)
+        self.assertIn(("GENDER", "F", "gender"), found)
+        self.assertEqual([t for e, t, n in found if n == "passengerName"], ["MILLER/JORDAN", "MILLER/JORDAN"],
+                         "the DOCS name and the passenger reference")
+
+    def test_contact_records_return_email_and_phone(self):
+        email, phone = spans("PNR", "CTCEDAHK1/JORDAN.MILLER//DEMOAIR.EXAMPLE-1MILLER/JORDAN", "CTCMDAHK1/3125550142-1MILLER/JORDAN")
+        self.assertIn(("EMAIL_ADDRESS", "JORDAN.MILLER//DEMOAIR.EXAMPLE", "ctceEmail"), email)
+        self.assertIn(("PHONE_NUMBER", "3125550142", "ctcmPhone"), phone)
+
+    def test_passenger_name_skips_codes_shaped_like_a_name(self):
+        # Made-up stand-ins for the shapes the earlier, looser pattern masked: none of them is a name.
+        for text in ("QQQ1X/DA9Z/12345678/DFW/1X/T/US/USD/AS", "T/FQR/MPDA123456/12000/0/01612345678/0002//", "XXCOM-US/DA123456-REF/",
+                     "RMMPDANN1DFWORD1234X09NOV.YQX/S25K-W-Y", "ABC OP/MILEAGE QUOTED 12000"):
+            with self.subTest(text=text):
+                self.assertNotIn("passengerName", [n for e, t, n in spans("PNR", text)[0]])
+        self.assertEqual([t for e, t, n in spans("PNR", "DOCSDA///JORDAN")[0] if n == "passengerName"], ["JORDAN"],
+                         "in a DOCS record with empty fields the name is found, not the record code")
+
+    def test_passenger_name_finds_whole_strings_passenger_references_and_docs_names(self):
+        def names(text):
+            return [t for e, t, n in spans("PNR", text)[0] if n == "passengerName"]
+        self.assertEqual(names("MILLER/JORDAN MR"), ["MILLER/JORDAN MR"])
+        self.assertEqual(names("MILLER-SMITH/ANN MARIE"), ["MILLER-SMITH/ANN MARIE"])
+        self.assertEqual(names("TKNEDAHK1DFWORD1234X09NOV-1MILLER/JORDAN.0161234567890C1"), ["MILLER/JORDAN"])
+        self.assertEqual(names("DOCSDAHK1/////12MAR85/F//MILLER/JORDAN-1MILLER/"), ["MILLER/JORDAN", "MILLER/"])
+
+    def test_new_field_recognizers_return_their_spans(self):
+        ip, phone, area, origin, osi = spans("PNR", "CLIENT IP 10.20.30.40", "5555550142*C 1.2", "55*B 1.2",
+                                             "QQQ1X/DA9Z/12345678/DFW/1X/T/US/USD/AS", "PAX1.2 CA NATIONAL // CA RESIDENT")
+        self.assertIn(("IP_ADDRESS", "10.20.30.40", "ipAddress"), ip)
+        self.assertEqual([(e, t) for e, t, n in phone], [("PHONE_NUMBER", "5555550142")], "the passenger marker *C 1.2 is kept")
+        self.assertEqual([(e, t) for e, t, n in area], [("PHONE_NUMBER", "55")])
+        self.assertEqual([(e, t) for e, t, n in origin], [("UNCLASSIFIED_IDENTIFIER", "12345678")])
+        self.assertEqual(sorted(t for e, t, n in osi if n == "osiNationality"), ["CA", "CA RESIDENT"])
+        self.assertEqual(spans("PNR", "11.20 TTL 55.000K")[0], [], "a price is not an IP address")
+
+    def test_change_identifiers_need_a_hex_letter_and_a_digit(self):
+        found = spans("PNR", "1A2B3C", "131500", "123456", "K7QX2M", "ABCDEF")
+        self.assertIn(("UNCLASSIFIED_IDENTIFIER", "1A2B3C", "changeIdentifier"), found[0])
+        self.assertEqual(found[1:], [[], [], [], []], "a time, a run of zeros, a record locator and letters only stay unchanged")
 
     def test_default_detection_off_with_recognizers_runs_only_the_defined_ones(self):
-        mixed, guess = spans("PNR", "CTCEDAHK1 alex@example.com 1MILLER/JORDAN", "Contact Alex Sample in Paris")
+        mixed, guess = spans("PNR", "CTCEDAHK1 alex@example.com -1MILLER/JORDAN", "Contact Alex Sample in Paris")
         self.assertEqual(mixed, [("PERSON", "MILLER/JORDAN", "passengerName")],
                          "the made-up email stays undetected; the SURNAME/GIVEN name is found")
         self.assertEqual(guess, [], "no spaCy PERSON or LOCATION guess runs")
 
     def test_default_detection_on_with_recognizers_runs_both(self):
-        found = spans("ShippedOn", "CTCEDAHK1 alex@example.com 1MILLER/JORDAN")[0]
+        found = spans("ShippedOn", "CTCEDAHK1 alex@example.com -1MILLER/JORDAN")[0]
         self.assertIn(("EMAIL_ADDRESS", "alex@example.com", "EmailRecognizer"), found)
         self.assertIn(("PERSON", "MILLER/JORDAN", "passengerName"), found)
 
@@ -171,13 +211,13 @@ class DetectionBridgeTests(unittest.TestCase):
         self.assertIn("passengerName", [n for e, t, n in spans("PNR", "MILLER/JORDAN")[0]], "the next call works normally")
 
     def test_offsets_are_utf16_so_dotnet_masks_the_right_characters(self):
-        text = "\U0001F600 CONTACT MILLER/JORDAN"
+        text = "\U0001F600-1MILLER/JORDAN"
         found = json.loads(presidio_demo.analyze_strings("PNR", json.dumps([text])))[0]
         name = [span for span in found if span[4] == "passengerName"][0]
         utf16 = text.encode("utf-16-le")
-        # The name pattern allows spaces, so the match starts at CONTACT, right after the emoji (two UTF-16 units) and a space.
-        self.assertEqual(name[0], 3)
-        self.assertEqual(utf16[name[0] * 2:name[1] * 2].decode("utf-16-le"), "CONTACT MILLER/JORDAN")
+        # The passenger reference -1 follows the emoji (two UTF-16 units), so the name starts at UTF-16 offset 4.
+        self.assertEqual(name[0], 4)
+        self.assertEqual(utf16[name[0] * 2:name[1] * 2].decode("utf-16-le"), "MILLER/JORDAN")
 
     def test_batch_keeps_one_result_per_string_and_rejects_bad_input(self):
         self.assertEqual(len(spans("PNR", "20261005", "MILLER/JORDAN", "")), 3)

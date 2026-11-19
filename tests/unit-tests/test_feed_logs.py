@@ -5,7 +5,9 @@ import re
 import struct
 import subprocess
 import unittest
+import xml.etree.ElementTree as ET
 
+from decoded_text_support import RECOGNIZERS
 from pipeline_harness import PROJECT, run
 
 SPIKE = PROJECT / "tests" / "DetectionParityChecks" / "bin" / "Debug" / "net10.0" / "DetectionParityChecks.dll"
@@ -140,6 +142,9 @@ class DetectionLogTests(unittest.TestCase):
         self.assertIn("DEFAULT-DETECTION off", self.on)
         run_ = subprocess.run(["dotnet", str(SPIKE), "bridge-json"], capture_output=True, text=True, timeout=300)
         defined = {r["name"] for line in run_.stdout.splitlines() if line.strip() for r in json.loads(line)["recognizers"]}
+        # Lone-name recognizers run in .NET, so they are not in the bridge configuration; they are defined in the files.
+        defined |= {r.get("name") for path in RECOGNIZERS.glob("*.xml") for r in ET.parse(path).getroot().iter("recognizer")
+                    if r.get("type") == "lone_name"}
         self.assertTrue(defined)
         for block in blocks(self.on):
             for _, line in block["entries"]:

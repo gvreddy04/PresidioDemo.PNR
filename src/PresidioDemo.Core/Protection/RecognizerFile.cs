@@ -30,6 +30,46 @@ public sealed record CustomRecognizer(string Name, string Entity, IReadOnlyList<
     IReadOnlyList<string> DenyList, double DenyListScore);
 
 /// <summary>
+/// A lone-name recognizer (<c>type="lone_name"</c>), applied in .NET after Presidio returned the message's spans: a decoded
+/// string that, trimmed, equals a name part its source recognizer found anywhere in the same message is detected whole as
+/// <see cref="Entity"/>. Name parts are the source match split on <c>/</c>, space, <c>-</c> and <c>'</c>, of two or more
+/// letters, compared case-insensitively, without the titles in <see cref="Titles"/>. Example: with <c>MILLER/JORDAN</c>
+/// found in a message, the lone strings <c>MILLER</c> and <c>JORDAN</c> are masked, and <c>SILVER</c> is not.
+/// </summary>
+/// <param name="Name">The unique recognizer name, shown in logs.</param>
+/// <param name="Entity">The entity a lone match is detected as, such as <c>PERSON</c>.</param>
+/// <param name="Source">The custom recognizer of the same file whose matches give the name parts.</param>
+public sealed record LoneNameRecognizer(string Name, string Entity, string Source)
+{
+
+    #region Fields and Constants
+
+    /// <summary>
+    /// The titles that are never name parts.
+    /// </summary>
+    public static readonly IReadOnlySet<string> Titles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "MR", "MRS", "MS", "MISS", "MSTR", "DR" };
+
+    /// <summary>
+    /// The characters a source match is split on.
+    /// </summary>
+    private static readonly char[] Separators = ['/', ' ', '-', '\''];
+
+    #endregion
+
+    #region Methods
+
+    /// <summary>
+    /// Returns the name parts of one source match: its pieces of two or more letters, without titles.
+    /// </summary>
+    /// <param name="match">The text the source recognizer matched.</param>
+    /// <returns>The parts, in the order they appear.</returns>
+    public static IEnumerable<string> Parts(string match) => match.Split(Separators, StringSplitOptions.RemoveEmptyEntries)
+        .Where(part => part.Length >= 2 && part.All(char.IsLetter) && !Titles.Contains(part));
+
+    #endregion
+}
+
+/// <summary>
 /// The values published unchanged: a decoded string that matches an item end to end is not analyzed (WR-014).
 /// </summary>
 /// <param name="Regex">Whether items are regular expressions (<c>match="regex"</c>) rather than exact text.</param>
@@ -71,10 +111,23 @@ public sealed record AllowList(bool Regex, IReadOnlyList<string> Items, IReadOnl
 /// <param name="Anonymizers">The actions by entity, including <c>DEFAULT</c> when configured.</param>
 /// <param name="Enabled">The names of Presidio predefined recognizers the file lists as enabled. Like every predefined
 /// recognizer they run only while <c>Presidio:DefaultDetection</c> is on, but their names are checked so a typo stops startup.</param>
+/// <param name="LoneNames">The lone-name recognizers, applied in .NET; none when null.</param>
 public sealed record RecognizerFile(FeedType Feed, string Language, double Threshold, IReadOnlyList<string> Disabled,
     IReadOnlyList<CustomRecognizer> Recognizers, AllowList AllowList, IReadOnlyDictionary<string, AnonymizerAction> Anonymizers,
-    IReadOnlyList<string>? Enabled = null)
+    IReadOnlyList<string>? Enabled = null, IReadOnlyList<LoneNameRecognizer>? LoneNames = null)
 {
+
+    #region Properties, Indexers
+
+    /// <summary>
+    /// Gets the entities the recognizers this file defines can produce: those of its custom and lone-name recognizers.
+    /// Presidio's predefined entities are not included.
+    /// </summary>
+    /// <value>The entity names.</value>
+    public IReadOnlySet<string> DefinedEntities => Recognizers.Select(r => r.Entity).Concat((LoneNames ?? []).Select(r => r.Entity))
+        .ToHashSet(StringComparer.Ordinal);
+
+    #endregion
 
     #region Methods
 
@@ -144,7 +197,7 @@ public static class RecognizerFileReader
     #region Methods
 
     /// <summary>
-    /// Returns the file name of a feed's recognizer XML, such as <c>pnr.xml</c>.
+    /// Returns the file name of a feed's recognizer XML: the feed's folder name in lower case, such as <c>pnr.xml</c> for PNR.
     /// </summary>
     /// <param name="feed">The feed route.</param>
     /// <returns>The file name.</returns>
@@ -212,6 +265,8 @@ public static class RecognizerFileReader
         var disabled = new List<string>();
         var enabled = new List<string>();
         var recognizers = new List<CustomRecognizer>();
+        var loneNames = new List<LoneNameRecognizer>();
+        var switchedOff = new HashSet<string>(StringComparer.Ordinal);
         var anonymizers = new Dictionary<string, AnonymizerAction>(StringComparer.Ordinal);
         AllowList? allowList = null;
         foreach (var element in root.Elements())
@@ -233,9 +288,20 @@ public static class RecognizerFileReader
                             {
                                 recognizers.Add(custom);
                             }
+                            else
+                            {
+                                switchedOff.Add(name);
+                            }
+                            break;
+                        case "lone_name":
+                            var lone = LoneName(element, name, file);
+                            if (Enabled(element, file, name))
+                            {
+                                loneNames.Add(lone);
+                            }
                             break;
                         default:
-                            throw Invalid(file, $"recognizer '{name}' type must be predefined or custom");
+                            throw Invalid(file, $"recognizer '{name}' type must be predefined, custom or lone_name");
                     }
                     break;
                 case "allow_list":
@@ -252,7 +318,29 @@ public static class RecognizerFileReader
                     throw Invalid(file, $"has an unknown element <{element.Name.LocalName}>");
             }
         }
-        return new RecognizerFile(feed, language, threshold, disabled, recognizers, allowList ?? AllowList.Empty, anonymizers, enabled);
+        foreach (var lone in loneNames)
+        {
+            // The source is checked once every recognizer is read, so it may be declared after the lone-name recognizer.
+            Require(recognizers.Any(r => r.Name == lone.Source), file, switchedOff.Contains(lone.Source)
+                ? $"lone_name recognizer '{lone.Name}' needs its source '{lone.Source}' enabled"
+                : $"lone_name recognizer '{lone.Name}' names source '{lone.Source}', which is not a custom recognizer of this file");
+        }
+        return new RecognizerFile(feed, language, threshold, disabled, recognizers, allowList ?? AllowList.Empty, anonymizers, enabled, loneNames);
+    }
+
+    /// <summary>
+    /// Reads one lone-name recognizer: its entity and the custom recognizer whose matches give the name parts.
+    /// </summary>
+    private static LoneNameRecognizer LoneName(XElement element, string name, string file)
+    {
+        Attributes(element, file, "name", "type", "enabled", "supported_entity", "source");
+        Require(!element.HasElements, file, $"lone_name recognizer '{name}' takes no child elements");
+        string entity = element.Attribute("supported_entity")?.Value ?? "";
+        Require(Regex.IsMatch(entity, "\\A[A-Z][A-Z_]*\\z", RegexOptions.CultureInvariant), file, $"recognizer '{name}' needs an upper-case supported_entity");
+        string source = element.Attribute("source")?.Value ?? "";
+        Require(source.Length > 0, file, $"lone_name recognizer '{name}' needs a source recognizer");
+        Require(source != name, file, $"lone_name recognizer '{name}' cannot be its own source");
+        return new LoneNameRecognizer(name, entity, source);
     }
 
     /// <summary>
