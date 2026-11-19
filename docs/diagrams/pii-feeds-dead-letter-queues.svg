@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1880 754" role="img" aria-labelledby="title desc">
 <title id="title">PNR feed with its dead letter queue</title>
-<desc id="desc">The DemoAir reservation host sends the PNR feed through Solace micro-integrations to the integration Solace broker. The PNR input queue sits in the restricted PII box with its own PNR dead letter queue on the same broker. The PII service AWS account runs one ECS worker for the PNR feed with Presidio in-process, masks passenger names and publishes the messages to the PNR (names masked) queue, which the partner core system consumes.</desc>
+<desc id="desc">The DemoAir reservation host sends the PNR feed through Solace micro-integrations to the integration Solace broker. The PNR input queue sits in the restricted PII box with its own PNR dead letter queue on the same broker. The PII service AWS account runs one ECS worker for the PNR feed with Presidio in-process, masks the listed PII fields and publishes the messages to the PNR (PII fields masked) queue, which the partner core system consumes.</desc>
 <defs>
 <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" fill="#444441"/></marker>
 <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" fill="#A32D2D"/></marker>
@@ -47,8 +47,8 @@ text{font-family:'Segoe UI',Arial,sans-serif;fill:#2C2C2A}
 <path class="dl" d="M605 220V248H708" marker-end="url(#r)"/>
 
 <rect x="1200" y="130" width="250" height="160" rx="12" fill="#EEF6E8" stroke="#3B6D11" stroke-width="1.5"/>
-<text class="h" x="1216" y="156" style="fill:#3B6D11">Names masked</text>
-<g class="cq"><rect x="1220" y="180" width="210" height="40" rx="6"/><use href="#q" x="1230" y="193" width="20" height="14"/><text class="s" x="1258" y="205">PNR (names masked)</text></g>
+<text class="h" x="1216" y="156" style="fill:#3B6D11">PII fields masked</text>
+<g class="cq"><rect x="1220" y="180" width="210" height="40" rx="6"/><use href="#q" x="1230" y="193" width="20" height="14"/><text class="s" x="1258" y="205">PNR (PII fields masked)</text></g>
 
 <path class="ln" d="M410 378H440V200H518" marker-end="url(#a)"/>
 <path class="ln" d="M690 200H940V378" marker-end="url(#a)"/>
@@ -59,7 +59,7 @@ text{font-family:'Segoe UI',Arial,sans-serif;fill:#2C2C2A}
 <rect x="480" y="340" width="990" height="184" rx="12" fill="#FAEEDA" stroke="#BA7517" stroke-width="1.5"/>
 <text class="h" x="496" y="366">PII service AWS account · ECS Fargate</text>
 <g class="wk"><rect x="890" y="380" width="320" height="56" rx="6"/><text class="t" x="1050" y="402" text-anchor="middle">PNR worker</text><text class="m" x="1050" y="422" text-anchor="middle">.NET + Presidio · binary XDR</text></g>
-<text class="s" x="509" y="470">One task for the PNR feed: reads the PNR PII queue, masks passenger names, publishes to the PNR names-masked queue, then acks.</text>
+<text class="s" x="509" y="470">One task for the PNR feed: reads the PNR PII queue, masks the listed PII fields, publishes to the PNR PII-fields-masked queue, then acks.</text>
 <text class="s" x="509" y="494">Presidio runs inside the worker through Python.NET. No HTTP calls.</text>
 
 <rect x="1530" y="80" width="320" height="230" rx="12" fill="#EEF6E8" stroke="#3B6D11" stroke-width="1.5"/>

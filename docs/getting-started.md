@@ -1,7 +1,7 @@
 # Getting started: set up and test PresidioDemo on Windows
 
 This guide takes a new developer from a clean Windows PC to a running feed worker that reads airline feed messages
-from a local Solace broker in Docker, protects passenger names with Presidio, and publishes the protected copy. It
+from a local Solace broker in Docker, protects the PII fields of the PNR field list with Presidio, and publishes the protected copy. It
 ends with testing the queue messages.
 
 Every step is a PowerShell block to copy and run, followed by **You should see**, so you can confirm it worked
@@ -204,13 +204,13 @@ if ($failed.Count -eq 0) { Write-Host "All .NET checks passed." -ForegroundColor
 **You should see:** `All .NET checks passed.` `Messaging.ContractTests` prints `SKIP Solace contract ...` here; it
 runs against the broker in step 20.
 
-**Python unit tests** (50 tests, about 1–2 minutes; they load Presidio):
+**Python unit tests** (59 tests, about 1–2 minutes; they load Presidio):
 
 ```powershell
 src\.venv\Scripts\python -m unittest discover -s tests/unit-tests
 ```
 
-**You should see:** `Ran 50 tests` and `OK`.
+**You should see:** `Ran 59 tests` and `OK`.
 
 **End-to-end sample check.** This sends both files in `docs/sample-docs/PNR` through the real feed worker and
 embedded Presidio, over the in-memory broker:
@@ -219,8 +219,8 @@ embedded Presidio, over the in-memory broker:
 src\.venv\Scripts\python tests/run_sample_verification.py
 ```
 
-**You should see:** `"Published": 2` and `"all_checks_passed": true`, with `"names_in_scope": 16` and
-`"out_of_scope": 88`: the check is names-only, so it checks the baseline's `PERSON` values and only counts the rest.
+**You should see:** `"Published": 2` and `"all_checks_passed": true`, with `"in_scope": 104`, `"protected": 57` and
+`"approved_exceptions": 47`: every baseline value is in scope, because the PNR recognizers cover every listed entity.
 No PNR negative sample is supplied, so nothing is rejected.
 
 Test output goes to `.test-runs\` (git-ignored). Some files there contain the original, unprotected sample data;
@@ -548,12 +548,12 @@ environment's section, then environment variables (`__` separates levels). Set a
 |---|---|
 | `$env:Messaging__Feed = "PNR"` | The worker consumes only the PNR feed |
 | `$env:Messaging__ConsumersPerTask = "4"` | 4 consumers per input queue (1–32) |
-| `$env:Presidio__DefaultDetection = "true"` | Presidio's predefined recognizers (email, phone, card, spaCy names and the rest) run beside the passenger-name recognizers; off by default |
+| `$env:Presidio__DefaultDetection = "true"` | Presidio's predefined recognizers (email, phone, card, spaCy names and the rest) run beside the PNR field recognizers; off by default |
 | `$env:Logging__LogLevel__Default = "Warning"` | Only warnings and errors, such as dead letters |
 
-The feed protection rules are in `src/PresidioDemo.Core/Configuration/recognizers/pnr.xml`. It keeps passenger names
-only (the `passengerName` and `memberName` recognizers); with `Presidio:DefaultDetection` off, the default, nothing
-else is detected. The build copies it next to the worker.
+The feed protection rules are in `src/PresidioDemo.Core/Configuration/recognizers/pnr.xml`. It masks the PII fields
+of the PNR field list (names, DOCS fields, contacts, tickets, loyalty, payment, identifiers, addresses, IP addresses);
+free text stays unchanged apart from what those recognizers find. The build copies it next to the worker.
 
 ## Troubleshooting
 

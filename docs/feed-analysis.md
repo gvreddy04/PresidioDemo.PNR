@@ -1,6 +1,6 @@
 # PNR feed sample review and structure
 
-> **Superseded design.** This review describes the per-feed parsers, field policies and the three XML files (`feed-policies.xml`, `xdr-layouts.xml`, `reference-layouts.xml`) that decoded-text detection replaced. Those files and parsers are removed. Protection now uses the generic decoder and the PNR recognizer file, which keeps passenger names only (`passengerName` and `memberName`); Presidio's predefined recognizers run too only with `Presidio:DefaultDetection` on, which is off by default. The other fields described below are published as received; see [Decoded-text detection](../README.md#decoded-text-detection). The sample review, the structure findings and the field meanings below stay valid as analysis; the configuration notes refer to the removed design. The protection results they produced are frozen, value-free, in [tests/fixtures/parity-baseline.json](../tests/fixtures/parity-baseline.json).
+> **Superseded design.** This review describes the per-feed parsers, field policies and the three XML files (`feed-policies.xml`, `xdr-layouts.xml`, `reference-layouts.xml`) that decoded-text detection replaced. Those files and parsers are removed. Protection now uses the generic decoder and the PNR recognizer file, which masks the `Mask` fields of the removed policy listed below, each by a recognizer; Presidio's predefined recognizers run too only with `Presidio:DefaultDetection` on, which is off by default; see [Decoded-text detection](../README.md#decoded-text-detection). The sample review, the structure findings and the field meanings below stay valid as analysis; the configuration notes refer to the removed design. The protection results they produced are frozen, value-free, in [tests/fixtures/parity-baseline.json](../tests/fixtures/parity-baseline.json).
 >
 > This branch (`PNR-Worker`) keeps the PNR feed only. The review of the other feeds, and the configuration examples of the removed design (which used one of those feeds), are in the repository history at commit `dffbdad`.
 
@@ -33,7 +33,69 @@ Counts below describe populated binary text/capture fields under the removed fie
 | PNR.txt | 5,452 | 74 | 80 Mask |
 | PNR_02.txt | 1,780 | 33 | 24 Mask |
 
-With decoded-text detection, both samples are published through the real worker and local Presidio, with `Presidio:DefaultDetection` off. The parity check is names-only: of the 104 values the former field policies protected, the 16 names are in scope, 12 of them protected and 4 approved exceptions (standalone names in which nothing is detected); the other 88 values are out of scope and published as received. Both identified PNR occurrences stay unchanged, and source hashes, payload sizes, raw words, string counts, zero padding, record syntax, MQ headers, row framing and newline style are preserved.
+With decoded-text detection, both samples are published through the real worker and local Presidio, with `Presidio:DefaultDetection` off. All 104 values the former field policies protected are in scope: 57 are protected and 47 are approved exceptions (35 free-text remarks, 7 strings of one to three characters, 2 phone remarks whose passenger marker is kept, 1 phone number in a string of its own, 1 change identifier without a letter A-F and 1 received-from code). Both identified PNR occurrences stay unchanged, and source hashes, payload sizes, raw words, string counts, zero padding, record syntax, MQ headers, row framing and newline style are preserved.
+
+## PNR field list and its recognizers
+
+Every `Mask` field of the removed PNR field policy, with the recognizers in `pnr.xml` that cover it and the approved-exception categories in [tests/fixtures/parity-exceptions.json](../tests/fixtures/parity-exceptions.json) for what they leave. `tests/unit-tests/test_pnr_field_coverage.py` keeps the same table and checks it against both files. `Keep` fields (dates and times, the record locator `/pnr`, segments, `phoneCity`, `MileageText`, `MileageQuoteText`, `FareText` and the like) are not listed and stay unchanged.
+
+| Field | Recognizers | Exception categories |
+| --- | --- | --- |
+| `/p2CreationTime` | `creationTime` | - |
+| `/originChangeIdentifier` | `changeIdentifier` | - |
+| `/originIdentifier` | `originIdentifier` | - |
+| `/surname` | `passengerName`, `loneNamePart` | - |
+| `/givenName` | `passengerName`, `loneNamePart` | - |
+| `/factText/IssuingCountry` | `docsIssuingCountry` | - |
+| `/factText/DocumentNumber` | `docsDocumentNumber` | - |
+| `/factText/Nationality` | `docsNationality`, `osiNationality` | - |
+| `/factText/DateOfBirth` | `dateOfBirth` | - |
+| `/factText/Gender` | `gender` | - |
+| `/factText/DocumentExpiry` | `docsExpiry` | - |
+| `/factText/PassengerName` | `passengerName` | - |
+| `/factText/AssociatedName` | `passengerName` | - |
+| `/factText/EmailAddress` | `ctceEmail` | - |
+| `/factText/PhoneNumber` | `ctcmPhone` | - |
+| `/factText/TicketNumber` | `ticketNumber` | - |
+| `/factText/Text` | `osiNationality` | free text |
+| `/frequentFlyerAccount/Account` | `loyaltyNumber` | - |
+| `/frequentFlyerAccount/Status` | `loyaltyStatus` | - |
+| `/frequentFlyerAccount/Text` | `loyaltyNumber` | - |
+| `/frequentFlyerHolderName` | `passengerName` | - |
+| `/phoneAreaCode` | `phoneRemark` | short string |
+| `/phoneText/PhoneRemark` | - | phone marker |
+| `/phoneText/Text` | `phoneRemark` | bare phone |
+| `/remarkText/CardSuffix` | `cardSuffix` | - |
+| `/remarkText/IpAddress` | `ipAddress` | - |
+| `/remarkText/MemberName` | `memberName` | - |
+| `/remarkText/MemberAccount` | `loyaltyNumber` | - |
+| `/remarkText/MemberStatus` | `loyaltyStatus` | - |
+| `/remarkText/SponsorAccount` | `loyaltyNumber` | - |
+| `/remarkText/Balance` | `accountBalance` | - |
+| `/remarkText/MsoIdentifier` | `msoId` | - |
+| `/remarkText/RequestedEmail` | `requestedEmail` | - |
+| `/remarkText/FareQuoteReference` | `orderId` | - |
+| `/remarkText/TicketOrderReference` | `orderId` | - |
+| `/remarkText/AddressCity` | `address` | - |
+| `/remarkText/AddressState` | `address` | - |
+| `/remarkText/AddressPostalCode` | `address` | - |
+| `/remarkText/AddressText` | `address` | - |
+| `/remarkText/RviReference` | `rviId` | - |
+| `/remarkText/ApprovalReference` | `approvalCode` | - |
+| `/remarkText/MileageOrderReference` | `orderId` | - |
+| `/remarkText/Text` | - | free text |
+| `/fareReferenceText/LoyaltyAccount` | `loyaltyNumber` | - |
+| `/fareReferenceText/TicketReference` | `ticketNumber` | - |
+| `/fareReferenceText/Text` | - | free text |
+| `/receivedFromCode` | `changeIdentifier` | received-from code |
+| `/receivedFromText` | `originIdentifier` | free text |
+| `/remarkIndexText/LoyaltyAccount` | `loyaltyNumber` | - |
+| `/remarkIndexText/Text` | - | free text |
+| `/etktPassengerName` | `passengerName` | - |
+| `/historyChangeIdentifier` | `changeIdentifier` | zero identifier |
+| `/passengerHistoryText` | - | free text |
+
+The categories: **free text**, a remark with no catch-all, published unchanged apart from what the recognizers find in it; **short string**, a binary string of one to three characters (WR-015); **phone marker**, the passenger marker after a phone remark's digits, kept as decided; **bare phone**, a phone number in a string of its own without that marker; **zero identifier**, a change identifier without a letter A-F, which the rule needs so that a six-digit creation time stays unchanged; **received-from code**, a code outside the hexadecimal identifier shape.
 
 ## Configuration behavior (removed design)
 
